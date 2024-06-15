@@ -11,7 +11,6 @@ Linux kernel 的記憶體分配機制稱作 slab allocation，根據實作細節
 接下來會透過分析版本 6.6.31 原始碼來了解 SLUB 的是如何實作，而擷取出來的原始碼會省略掉不重要的部分，並不代表完整的結構或 function。
 
 
-
 ## 2. 結構
 
 ### 2.1. Overview
@@ -230,7 +229,10 @@ static struct kmem_cache *create_cache(const char *name,
 
 ## 3. 分配記憶體
 
-主要提供兩個 function 來分配記憶體，分別為：
+在開始看程式碼的處理前，可以先參考論文 [PSPRAY: Timing Side-Channel based Linux Kernel Heap Exploitation Technique](https://www.usenix.org/system/files/sec23summer_79-lee-prepub.pdf) 裡面的一張圖，圖中清楚呈現了記憶體分配的整個過程。
+<img src="/assets/image-20240615160217077.png" alt="image-20240615160217077" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
+Kernel 主要提供兩個 function 來分配記憶體，分別為：
 
 - `kmalloc(memory_size, flags)` - 使用 general cache
 - `kmem_cache_alloc(kmem_cache)` - 使用 specified cache
@@ -985,5 +987,3 @@ void free_large_kmalloc(struct folio *folio, void *object)
     __free_pages(folio_page(folio, 0), order);
 }
 ```
-
-
