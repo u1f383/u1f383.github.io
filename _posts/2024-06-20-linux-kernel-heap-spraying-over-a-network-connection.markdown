@@ -23,7 +23,7 @@ static int e1000_clean(struct napi_struct *napi, int budget)
     int tx_clean_complete = 0, work_done = 0;
     tx_clean_complete = e1000_clean_tx_irq(adapter, &adapter->tx_ring[0]);
     adapter->clean_rx(adapter, &adapter->rx_ring[0], &work_done, budget);
-  	// [...]
+    // [...]
 }
 ```
 
@@ -50,8 +50,8 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
   
     // [...]
     if (buffer_info->rxbuf.data == NULL)
-	    skb_put(skb, length);
-	else /* copybreak skb */
+        skb_put(skb, length);
+    else /* copybreak skb */
         skb_trim(skb, length); // 移除超過 length 的資料
     e1000_receive_skb(adapter, status, rx_desc->special, skb);
     // [...]
