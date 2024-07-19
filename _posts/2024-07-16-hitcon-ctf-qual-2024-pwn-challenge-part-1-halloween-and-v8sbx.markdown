@@ -272,7 +272,7 @@ Back to the challenge, it is important to note that the check for whether the it
 ```c
 static int read_trick(struct socket *sock, struct grip *grip)
 {
-	// [...]
+    // [...]
     next_iter = iter + 1 + content_len;
     if (next_iter /*char*/ >= scarecrow->curr_ptr /*unsigned short*/) // [1]
         break;
