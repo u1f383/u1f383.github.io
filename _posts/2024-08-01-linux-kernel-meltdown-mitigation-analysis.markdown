@@ -169,14 +169,15 @@ To observe the effect of `ALTERNATIVE`, let's continue with the example of `entr
 # [...]
 ```
 
-Conversely, if PTI is not enabled, the original assembly code is used, which includes a `jmp` instruction. This version directly executes a `jmp` to skip over the instructions that would update the `cr3`
+Conversely, if PTI is not enabled, the original assembly code is used, which includes a `jmp` instruction. This version directly executes a `jmp` to skip over the instructions that would update the `cr3`.
 
 ```
 <entry_SYSCALL_64>:       swapgs
 <entry_SYSCALL_64+3>:     mov    QWORD PTR gs:0x6014,rsp
-<entry_SYSCALL_64+12>:    jmp    0xffffffff826000a0 <entry_SYSCALL_64+32>   # [12]
+<entry_SYSCALL_64+12>:    jmp    0xffffffff826000a0 <entry_SYSCALL_64+32> ----  # [12]
+# [...]                                                                      |
+<entry_SYSCALL_64+32>:    mov    rsp,QWORD PTR gs:0x32398   <-----------------
 # [...]
-<entry_SYSCALL_64+32>:    mov    rsp,QWORD PTR gs:0x32398
 ```
 
 
