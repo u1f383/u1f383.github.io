@@ -4,6 +4,9 @@ title:  "HITCON CTF QUAL 2024 Pwn Challenge Part 1 - Halloween and v8sbx"
 categories: ctf
 ---
 
+- Part1: [HITCON CTF QUAL 2024 Pwn Challenge Part 1 - Halloween and v8sbx]({% post_url 2024-07-16-hitcon-ctf-qual-2024-pwn-challenge-part-1-halloween-and-v8sbx %})
+- Part2: [HITCON CTF QUAL 2024 Pwn Challenge Part 2 - reEscape]({% post_url 2024-07-18-hitcon-ctf-qual-2024-pwn-challenge-part-2-reEscape %})
+
 This year, I created a Linux Kernel challenge **"Halloween"** for the HITCON CTF Qualification, and the entire process took me about a month, including designing the challenge, writing the exploit, and setting up the environment. This article serves as the official writeup, providing a detailed explanation of the vulnerability and the exploitation method used in this challenge. Additionally, I also reviewed some other pwn challenges and had a lot of funs. As a result, I will also write down my solution notes for their challenges.
 
 ## Halloween - Linux Kernel RCE

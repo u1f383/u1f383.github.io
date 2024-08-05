@@ -4,6 +4,9 @@ title:  "HITCON CTF QUAL 2024 Pwn Challenge Part 2 - reEscape"
 categories: ctf
 ---
 
+- Part1: [HITCON CTF QUAL 2024 Pwn Challenge Part 1 - Halloween and v8sbx]({% post_url 2024-07-16-hitcon-ctf-qual-2024-pwn-challenge-part-1-halloween-and-v8sbx %})
+- Part2: [HITCON CTF QUAL 2024 Pwn Challenge Part 2 - reEscape]({% post_url 2024-07-18-hitcon-ctf-qual-2024-pwn-challenge-part-2-reEscape %})
+
 ## reEscape - QEMU VM Escape
 
 ### 1. Introduction
