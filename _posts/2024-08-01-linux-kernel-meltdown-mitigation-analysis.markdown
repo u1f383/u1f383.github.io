@@ -440,3 +440,52 @@ So currently, most kernelCTF players are using EntryBleed to bypass KASLR.
 
 
 
+## 5. PCID
+
+**Process Context Identifiers (PCID)** is a mechanism designed to reduce the overhead caused by flushing the TLB (Translation Lookaside Buffer) during context switches. Each process has a unique virtual memory mapping, requiring the flushing of **non-global** TLB entries with every context switch. **Ideally**, PCID assigns a distinct ID to each process and sets this ID in the TLB entry. During TLB access, only entries with a matching PCID to the current process are checked, ensuring that TLB entries are not shared between different processes. Consequently, this eliminates the need to flush all TLB entries.
+
+PCID is supported only on the x64 and is disabled by default. Enabling it requires setting bit-17 (PCIDE) of the CR4 register. Once enabled, the PCID is stored in the lower 12 bits of the CR3 register. Because of only 12 bits being available, it doesn't practically assign a unique PCID to every process, and even if unique IDs could be assigned, the entries filled with different processes could slow down TLB access. Therefore, it needs a lot of optimizations when applying PCID to the OS.
+
+Typically, TLB flushes occur when **updating the page table**, specifically when **writing to the CR3 register**. The PTI mechanism necessitates frequent switches between user space and kernel page tables, leading to constant TLB flushes and significantly reducing performance. However, with PCID enabled, switching page tables no longer requires flushing the entire TLB, thereby greatly decreasing the performance impact. Let's see how the Linux kernel enables PCID!
+
+The init function `get_cpu_cap()`, called by `setup_arch()`, runs the `cpuid` instruction to obtain the current CPU's supported capabilities. If bit-17 (0x20000) of the returned `ecx` [3] is set, it indicates that the CPU supports PCID.
+
+```c
+void get_cpu_cap(struct cpuinfo_x86 *c)
+{
+    u32 eax, ebx, ecx, edx;
+    // [...]
+    
+    if (c->cpuid_level >= 0x00000001) {
+        cpuid(0x00000001, &eax, &ebx, &ecx, &edx);
+        c->x86_capability[CPUID_1_ECX] = ecx; // [1]
+    }
+    
+    // [...]
+}
+```
+
+After that, the `setup_pcid()` function is called to initialize PCID. This function checks whether the architecture is x64 [2] and whether the CPU supports PCID [3]. If both conditions are met, it sets the PCIDE bit in CR4 to enable PCID [4]. (some details are omitted)
+
+```c
+static void setup_pcid(void)
+{
+    if (!IS_ENABLED(CONFIG_X86_64)) // [2]
+        return;
+
+    if (!boot_cpu_has(X86_FEATURE_PCID)) // [3]
+        return;
+    
+    // [...]
+    
+    cr4_set_bits(X86_CR4_PCIDE); // [4]
+    
+    // [...]
+}    
+```
+
+You can still check if the CPU supports PCID after booting by looking at `/proc/cpuinfo`.
+
+```bash
+cat /proc/cpuinfo | grep -i pcid
+```
