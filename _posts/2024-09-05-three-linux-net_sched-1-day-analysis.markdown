@@ -151,7 +151,7 @@ pwndbg> p sch->dev_queue->dev->num_tc
 $11 = 1
 ```
 
-在此情境下不需要考慮 RCU grace period 就可以觸發漏洞。
+在此情境下 **應該** 不需要考慮 RCU grace period 就可以觸發漏洞。
 
 ## 2. (CVE-2023-0590) net: sched: fix race condition in qdisc_graft()
 
@@ -173,7 +173,6 @@ $11 = 1
 ```
 
 `notify_and_destroy(dev->qdisc)` 會依序呼叫下面 function：
-
 - `qdisc_put(old_qdisc)`
 - `__qdisc_destroy(old_qdisc)`
 - `call_rcu(qdisc_free_cb)`
