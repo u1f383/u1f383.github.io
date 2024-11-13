@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Linux RCU internal"
+title:  "Linux RCU Internal"
 categories: linux
 ---
 
