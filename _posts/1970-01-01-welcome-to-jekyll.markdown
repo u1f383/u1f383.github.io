@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Cheatsheet"
+title:  "Welcome to Jekyll!"
 categories: cheatsheet
 ---
 
@@ -47,4 +47,20 @@ wget https://github.com/gregkh/linux/archive/<COMMIT_HASH>.zip
 ``` bash
 # compile x64 version on aarch64
 make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -j`nproc`
+```
+
+
+## Debug
+
+``` bash
+gdb-multiarch ./vmlinux -ex "target remote :1234"
+```
+
+### GDB Stub
+``` bash
+# breakpoint at specific syscall
+b __do_sys_<SYSCALL_NAME>
+
+# breakpoint at syscall entry
+b entry_SYSCALL_64
 ```
