@@ -40,6 +40,9 @@ wget https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/.config
 # Source code info
 curl https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_INFO
 wget https://github.com/gregkh/linux/archive/<COMMIT_HASH>.zip
+## or just one-line
+wget https://github.com/gregkh/linux/archive/$(curl -s https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_INFO | sed -n 's/COMMIT_HASH=//p').zip
+
 ```
 
 ### Compilation
