@@ -6,6 +6,18 @@ categories: cheatsheet
 
 ## Linux Kernel
 
+### Resources
+
+- [Interesting Kernel Objects](https://lookerstudio.google.com/u/0/reporting/68b02863-4f5c-4d85-b3c1-992af89c855c/page/n92nD)
+
+- [google/security-research](https://github.com/google/security-research)
+
+- [kernelCTF sheet](https://docs.google.com/spreadsheets/d/e/2PACX-1vS1REdTA29OJftst8xN5B5x8iIUcxuK6bXdzF8G1UXCmRtoNsoQ9MbebdRdFnj6qZ0Yd7LwQfvYC2oF/pubhtml)
+
+- [kernelCTF rules](https://google.github.io/security-research/kernelctf/rules.html)
+
+- [Linux CVE announcement](https://lore.kernel.org/linux-cve-announce/)
+
 ### kernelCTF
 #### VM setup
 ``` bash
@@ -43,6 +55,9 @@ curl https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_IN
 wget https://github.com/gregkh/linux/archive/<COMMIT_HASH>.zip
 ## or just one-line
 wget https://github.com/gregkh/linux/archive/$(curl -s https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_INFO | sed -n 's/COMMIT_HASH=//p').zip
+
+# Commit info
+https://github.com/torvalds/linux/commit/<COMMIT_HASH>
 ```
 
 ### Compilation
