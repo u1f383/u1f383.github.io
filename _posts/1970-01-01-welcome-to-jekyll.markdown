@@ -62,7 +62,7 @@ https://github.com/torvalds/linux/commit/<COMMIT_HASH>
 
 ### Compilation
 ``` bash
-# compile x64 version on aarch64
+# compile x64 version kernel on aarch64
 make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -j`nproc`
 ```
 
@@ -75,8 +75,8 @@ file->f_count;
 
 // struct sock
 // refcount++: sock_hold()
-// refcount--: __sock_put()
-#define sk_refcnt		__sk_common.skc_refcnt
+// refcount--: sock_put()
+#define sk_refcnt        __sk_common.skc_refcnt
 sk->__sk_common.skc_refcnt;
 
 // struct mm_struct
@@ -98,14 +98,45 @@ t->usage;
 // refcount++: get_cred()
 // refcount--: put_cred()
 cred->usage;
+
+// struct page
+// refcount++: try_get_page()
+// refcount--: put_page_testzero()
+page->_refcount;
 ```
 
 ### Common Objects Lock Functions
 ``` c
 // struct mm_struct
-mmap_read_lock();
-mmap_read_unlock();
+mmap_read_lock(current->mm);
+mmap_read_unlock(current->mm);
+
+// struct sock
+lock_sock(sk);
+release_sock(sk);
 ```
+
+### virt_to_page
+``` c
+#define __START_KERNEL_map (0xffffffff80000000)
+extern unsigned long phys_base;        // 0 when nokaslr
+extern unsigned long page_offset_base; // 0xffff888000000000 when nokaslr
+extern unsigned long vmemmap_base;     // 0xffffea0000000000 when nokaslr
+
+struct page *virt_to_page(unsigned long virt_addr) {
+    unsigned long pfn;
+  
+    if (virt_addr > __START_KERNEL_map)
+        pfn = (virt_addr - __START_KERNEL_map + phys_base) >> 12;
+    else 
+        pfn = (virt_addr - page_offset_base) >> 12;
+  
+    // sizeof(struct page) == 0x40
+    return vmemmap_base + 0x40 * pfn;
+}
+```
+
+###
 
 ### Exploit
 #### Techiques
@@ -122,7 +153,7 @@ bool pin_on_cpu(int cpu_id)
     CPU_SET(cpu_id, &cpuset);
     
     if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) < 0) {
-	    return false;
+        return false;
     }
     return true;
 }
