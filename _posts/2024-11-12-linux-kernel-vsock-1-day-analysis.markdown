@@ -286,3 +286,34 @@ So I grep-ed all the uses of `vsk->trans;` and checked whether they could be rea
 Then I'm stuck and have no idea what to try next 😭. Perhaps I missed something important, or I might need to use a different protocol type instead of SOCK_SEQPACKET. I'm not sure yet.
 
 I'll give it another try when I have some free time, and update this post with any new progress.
+
+<br>
+
+**2024.12.10 update**
+
+I am now able to trigger the vulnerability, which results in a null-ptr-deref.
+
+However, I encountered some difficulties during the reproduction process, and some of them were only resolved with the help of other researchers 🥲. Therefore, I will not provide further details here. For anyone interested, you can refer to the diagram below.
+
+<img src="/assets/image-20241210113636330.png" alt="image-20241210113636330" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
+To increase the success rate, you can add `mdelay()` to the function `vsock_connect()` in `net/vmw_vsock/af_vsock.c` to extend the race window.
+
+``` c
+static int vsock_connect(struct socket *sock, struct sockaddr *addr,
+             int addr_len, int flags)
+{
+    // [...]
+    while (sk->sk_state != TCP_ESTABLISHED && sk->sk_err == 0) {
+        // [...]
+        release_sock(sk);
+        timeout = schedule_timeout(timeout);
+        mdelay(5000); // <----------
+        lock_sock(sk);
+        // [...]
+    }
+    // [...]
+}
+```
+
+Thanks to Billy (@st424204) for providing some helpful hints.

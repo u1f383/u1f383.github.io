@@ -64,6 +64,20 @@ https://github.com/torvalds/linux/commit/<COMMIT_HASH>
 ``` bash
 # compile x64 version kernel on aarch64
 make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -j`nproc`
+
+# kernel module
+make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -j`nproc` modules_prepare
+```
+
+Makefile of the kernel module `test.c`
+``` Makefile
+obj-m += test.o
+
+all:
+    make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src>/src M=$(PWD) modules
+
+clean:
+    make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src>/src M=$(PWD) clean
 ```
 
 ### Common Objects Refcount Fields
@@ -114,6 +128,11 @@ mmap_read_unlock(current->mm);
 // struct sock
 lock_sock(sk);
 release_sock(sk);
+
+// struct files_struct
+spin_lock(&files->file_lock);
+/* fdt = files_fdtable(files) */
+spin_unlock(&files->file_lock);
 ```
 
 ### virt_to_page
