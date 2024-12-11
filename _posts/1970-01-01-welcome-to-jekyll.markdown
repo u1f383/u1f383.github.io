@@ -74,10 +74,36 @@ Makefile of the kernel module `test.c`
 obj-m += test.o
 
 all:
-    make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src>/src M=$(PWD) modules
+    make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src> M=$(PWD) modules
 
 clean:
-    make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src>/src M=$(PWD) clean
+    make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src> M=$(PWD) clean
+```
+
+### Ubuntu specified version
+
+``` bash
+# Ubuntu offical page
+https://blueprints.launchpad.net/ubuntu/jammy/amd64/linux-image-5.15.0-69-generic/5.15.0-69.76
+https://blueprints.launchpad.net/ubuntu/jammy/amd64/linux-modules-5.15.0-69-generic/5.15.0-69.76
+
+# download image & modules
+wget http://launchpadlibrarian.net/656759576/linux-image-5.15.0-69-generic_5.15.0-69.76_amd64.deb
+wget http://launchpadlibrarian.net/656414807/linux-modules-5.15.0-69-generic_5.15.0-69.76_amd64.deb
+
+# unpack & install
+sudo dpkg -i *.deb
+
+# find the menu entry
+sudo awk -F\' '/menuentry / {print $4}' /boot/grub/grub.cfg
+
+# fill the default kernel
+sudo vim /etc/default/grub
+## if output is "gnulinux-5.15.0-69-generic-advanced-277588d7-7692-4c38-8e63-1b553b7d66b8", set
+## GRUB_DEFAULT="gnulinux-advanced-277588d7-7692-4c38-8e63-1b553b7d66b8>gnulinux-5.15.0-69-generic-advanced-277588d7-7692-4c38-8e63-1b553b7d66b"
+
+# update grub
+sudo update-grub
 ```
 
 ### Common Objects Refcount Fields
@@ -98,6 +124,11 @@ sk->__sk_common.skc_refcnt;
 // refcount++: mmdrop()
 mm->mm_count;
 
+// struct mm_strucut (user space)
+// refcount++: mmget() / mmget_not_zero()
+// refcount--: mmput()
+mm->mm_users;
+
 // struct pid
 // refcount++: get_pid()
 // refcount--: put_pid()
@@ -117,6 +148,17 @@ cred->usage;
 // refcount++: try_get_page()
 // refcount--: put_page_testzero()
 page->_refcount;
+
+// struct ns_common ns (namespace member)
+// take time_namespace (struct time_namespace) as example
+// refcount++: get_time_ns()
+// refcount--: put_time_ns()
+ns->ns.count;
+
+// struct nsproxy ns
+// refcount++: get_nsproxy()
+// refcount--: put_nsproxy()
+ns->count;
 ```
 
 ### Common Objects Lock Functions
@@ -135,7 +177,7 @@ spin_lock(&files->file_lock);
 spin_unlock(&files->file_lock);
 ```
 
-### virt_to_page
+### virt & page
 ``` c
 #define __START_KERNEL_map (0xffffffff80000000)
 extern unsigned long phys_base;        // 0 when nokaslr
@@ -153,9 +195,12 @@ struct page *virt_to_page(unsigned long virt_addr) {
     // sizeof(struct page) == 0x40
     return vmemmap_base + 0x40 * pfn;
 }
-```
 
-###
+void *page_to_virt(unsigned long page_addr) {
+    unsigned long pfn = (page_addr - vmemmap_base) / 0x40;
+    return (pfn << 12UL) + page_offset_base;
+}
+```
 
 ### Exploit
 #### Techiques
