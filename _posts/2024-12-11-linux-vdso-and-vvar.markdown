@@ -422,14 +422,10 @@ The most interesting part is that the installation handler does now allow a mult
 Why is a multi-threaded process unabled to install a time namespace, and what would happen if we could bypass this restriction? To explore this experimentally, I removed the check and attempted to construct a namespace state that triggers a UAF in the VVAR page.
 
 ``` diff
-static int timens_install(struct nsset *nsset, struct ns_common *new)
-{
-    struct nsproxy *nsproxy = nsset->nsproxy;
-    struct time_namespace *ns = to_time_ns(new);
-
+static int timens_install(struct nsset *nsset, struct ns_common *new) {
+    // [...]
 -   if (!current_is_single_threaded())
 -       return -EUSERS;
-
     // [...]
 }
 ```
