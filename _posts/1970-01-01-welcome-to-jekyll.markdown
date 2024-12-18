@@ -412,7 +412,7 @@ Some tricks
 | CONFIG_RANDOMIZE_BASE | Implements KASLR. |
 | CONFIG_SLAB_VIRTUAL | Ensures slab virtual memory is never reused for a different slab. |
 | CONFIG_RANDOM_KMALLOC_CACHES | There are multiple generic slab caches for each size, 16 by default. The kenrel selects random slabs based on `_RET_IP_` and a random seed. |
-
+| CONFIG_INIT_STACK_ALL_ZERO | Initializes everything on the stack (including padding) with a zero value. |
 
 #### Capabliliby
 `ns_capable()` - creating a new namespace can bypass this check. Common capabilities include `CAP_SYS_ADMIN` (user) or `CAP_NET_ADMIN` (network), etc.
