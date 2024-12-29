@@ -38,6 +38,22 @@ void init_func(void) {
 // [...]
 ```
 
+Modifying the `iproute2/tc/tc.c` file in the same way to fix the `tc` binary.
+
+``` c
+// [...]
+extern struct qdisc_util netem_qdisc_util;
+void init_func(void) __attribute__((constructor));
+void init_func(void) {
+    struct qdisc_util *l;
+
+    l = &netem_qdisc_util;
+    l->next = qdisc_list;
+    qdisc_list = l;
+}
+// [...]
+```
+
 ### Compile iputils
 
 ``` bash
