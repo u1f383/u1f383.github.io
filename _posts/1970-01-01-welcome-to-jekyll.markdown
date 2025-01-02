@@ -505,6 +505,9 @@ Interrupt disabled / enabled
 ## Debug
 ``` bash
 gdb-multiarch ./vmlinux -ex "target remote :1234"
+
+## handle KASLR
+symbol-file ./vmlinux -o <offset> # _stext - 0xffffffff81000000
 ```
 
 ### GDB Stubs
