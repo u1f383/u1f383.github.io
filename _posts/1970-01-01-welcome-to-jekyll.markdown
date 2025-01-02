@@ -106,6 +106,55 @@ sudo vim /etc/default/grub
 sudo update-grub
 ```
 
+### Ubuntu (24.04+) Debug
+
+#### Source Code
+1. Add the below snippet to the file `/etc/apt/sources.list.d/ubuntu.sources`.
+```
+Types: deb-src
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates noble-backports noble-proposed
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+```
+
+2. Update the list of available packages by running `sudo apt update`.
+
+3. Download the kernel source code.
+``` bash
+sudo apt install dpkg-dev
+apt source linux-image-unsigned-$(uname -r)
+```
+
+#### Debug Image
+> Ref: https://ubuntu.com/server/docs/debug-symbol-packages
+
+1. Install the dbgsym keyring.
+``` bash
+sudo apt install ubuntu-dbgsym-keyring
+```
+
+2. Create file `/etc/apt/sources.list.d/ddebs.list` with below content.
+```
+deb http://ddebs.ubuntu.com noble main restricted universe multiverse
+deb http://ddebs.ubuntu.com noble-updates main restricted universe multiverse
+deb http://ddebs.ubuntu.com noble-proposed main restricted universe multiverse
+```
+
+3. Download the kernel image with debug symbol.
+``` bash
+apt install linux-image-unsigned-$(uname -r)-dbgsym
+```
+
+4. Show debug package information.
+``` bash
+dpkg-query -L linux-image-unsigned-$(uname -r)-dbgsym
+## vmlinux path
+/usr/lib/debug/boot/vmlinux-6.8.0-49-generic
+## kernel module path
+/usr/lib/debug/lib/modules/6.8.0-49-generic/kernel
+```
+
 ### Common Objects Refcount Fields
 ``` c
 // struct file

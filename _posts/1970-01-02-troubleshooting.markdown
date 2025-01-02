@@ -75,6 +75,26 @@ endian = 'little'
 
 To rebuild, you need to remove directory `builddir/`.
 
+### Compile libmnl & libnftnl
+
+``` bash
+# 1. libmnl
+cd ./libmnl-1.0.5
+./configure --host=x86_64-linux-gnu --enable-static --prefix=<output_path>
+make -j`nproc`
+
+# 2. lbnftnl
+cd ./libnftnl-1.2.5
+./configure --host=x86_64-linux-gnu --enable-static --prefix=<output_path>
+make -j`nproc`
+
+# 3. compile with other file
+x86_64-linux-gnu-gcc -o test test.c -L./libnftnl_build/<output_path>/lib      \
+                                    -L./libmnl_build/<output_path>/lib        \
+                                    -I./libnftnl_build/libnftnl-1.2.5/include \
+                                    -I./libmnl_build/libmnl-1.0.5/include -static -lnftnl -lmnl
+```
+
 ### Ubuntu source list
 
 The file `/etc/apt/sources.list` specifies the repositories from which the system can download software packages.
