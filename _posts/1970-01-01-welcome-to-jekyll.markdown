@@ -258,17 +258,12 @@ Pin CPU
 - `sched_setaffinity()` or `pthread_setaffinity_np()`
 
 ```c
-bool pin_on_cpu(int cpu_id)
+void pin_on_cpu(int cpu_id)
 {
     cpu_set_t cpuset;
-    
     CPU_ZERO(&cpuset);
     CPU_SET(cpu_id, &cpuset);
-    
-    if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) < 0) {
-        return false;
-    }
-    return true;
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
 }
 ```
 
