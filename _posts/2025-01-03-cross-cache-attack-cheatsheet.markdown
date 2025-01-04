@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
 }
 ```
 
-Clearly, the time spent peaks every 32 allocation, which corresponds to the `objs_per_slab` value of the `kmalloc-128` slab.
+Clearly, the time spent peaks every 32 allocations, which corresponds to the `objs_per_slab` value of the `kmalloc-128` slab.
 
 ```
 # [...]
