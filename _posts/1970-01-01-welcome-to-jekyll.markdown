@@ -209,10 +209,15 @@ ns->ns.count;
 // refcount--: put_nsproxy()
 ns->count;
 
-// struct user_struct u
+// struct user_struct
 // refcount++: get_uid()
 // refcount--: free_uid()
 u->__count;
+
+// struct files_struct (current->files)
+// refcount++: atomic_inc(&oldf->count)
+// refcount--: put_files_struct()
+files->count;
 ```
 
 ### Common Objects Lock Functions

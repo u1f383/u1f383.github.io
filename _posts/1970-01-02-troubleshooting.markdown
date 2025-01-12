@@ -118,3 +118,7 @@ sudo apt update
 Normally, you don't need to update the source file once it's set up. However, some non-LTS releases rearched End of Life very fast quickly, and in such cases, the original repositories URLs may be changed.
 
 In the case I encountered, I updated the URL from `http://ports.ubuntu.com/ubuntu-ports/` to `http://old-releases.ubuntu.com/ubuntu/`, the `apt` command worked normally afterward.
+
+### Custom Kernel Module
+
+If the kernel is compiled with `CONFIG_SECURITY_LOADPIN`, the LoadPin subsystem will be enabled and block all external kernel modules. You can add parameter `loadpin.inforce=0` in boot command line to disable it.
