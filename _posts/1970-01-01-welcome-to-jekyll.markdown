@@ -208,6 +208,11 @@ ns->ns.count;
 // refcount++: get_nsproxy()
 // refcount--: put_nsproxy()
 ns->count;
+
+// struct user_struct u
+// refcount++: get_uid()
+// refcount--: free_uid()
+u->__count;
 ```
 
 ### Common Objects Lock Functions
