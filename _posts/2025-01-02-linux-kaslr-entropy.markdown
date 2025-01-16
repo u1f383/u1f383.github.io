@@ -177,7 +177,7 @@ void __init kernel_randomize_memory(void)
 ```
 
 Summary:
-- **Base Address**: 0xfffffe0000000000
+- **Base Address**: 0xffff888000000000
 - **Offset Unit**: 0x40000000 (`PUD_SIZE`)
 - **Range**: 0 ~ 25088 (0x188000000000, first round entropy)
 
