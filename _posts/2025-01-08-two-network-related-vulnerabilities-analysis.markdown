@@ -61,10 +61,10 @@ struct rtable *ip_route_output_key_hash(struct net *net, struct flowi4 *fl4,
                     const struct sk_buff *skb)
 {
     struct fib_result res = {
-        .type        = RTN_UNSPEC,
+        .type      = RTN_UNSPEC,
         .fi        = NULL,
-        .table        = NULL,
-        .tclassid    = 0,
+        .table     = NULL,
+        .tclassid  = 0,
     };
     struct rtable *rth;
 
