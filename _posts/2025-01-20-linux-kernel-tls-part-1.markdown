@@ -1886,6 +1886,30 @@ static void tls_encrypt_done(void *data, int err)
 }
 ```
 
+During initialization, the `ctx->decrypt_pending` and `ctx->encrypt_pending` are set to 1 now.
+
+``` diff
+@@ -2601,7 +2578,7 @@ static struct tls_sw_context_tx *init_ctx_tx(struct tls_context *ctx, struct soc
+// [...]
+-   spin_lock_init(&sw_ctx_tx->encrypt_compl_lock);
++   atomic_set(&sw_ctx_tx->encrypt_pending, 1);
+
+@@ -2622,7 +2599,7 @@ static struct tls_sw_context_rx *init_ctx_rx(struct tls_context *ctx)
+// [...]
+-   spin_lock_init(&sw_ctx_rx->decrypt_compl_lock);
++   atomic_set(&sw_ctx_rx->decrypt_pending, 1);
+```
+
+For decryption:
+- `tls_decrypt_done()`: Decrements the pending count and calls `complete()` if it reaches zero.
+- `tls_decrypt_async_wait()`: Decrements the pending count and calls `crypto_wait_req()` if it does not reach zero; afterward, it increments the count again.
+- `tls_do_decryption()`: Increments the pending count if the operation is asynchronous.
+
+For encryption:
+- `tls_encrypt_done()`: Decrements the pending count and calls `complete()` if it reaches zero.
+- `tls_encrypt_async_wait()`: Decrements the pending count and calls `crypto_wait_req()` if it does not reach zero; afterward, it increments the count again.
+- `tls_do_encryption()`: Increments the pending count first and decrements it again if an error occurs.
+
 #### 4.1.2. Root Cause
 
 If the `tls_sw_recvmsg()` function transmits TLS packets asynchronously, it will first dispatch requests to the kthread. Then, it will acquire the decryption completion lock [1], retrieve the decryption pending count [2], and finally wait for the requests to complete [3].
@@ -2171,7 +2195,7 @@ I apply the following diff to patch the `tls_encrypt_done()` function to extend 
 +   mdelay(2000)
 ```
 
-#### 4.1.3. Others
+#### 4.1.4. Others
 
 The relationship between request objects is a bit complex, so I have illustrated the structures and left them here for those who are interested. The `data` is the parameter of the callback functions `tls_encrypt_done()` and `tls_decrypt_done()`.
 
