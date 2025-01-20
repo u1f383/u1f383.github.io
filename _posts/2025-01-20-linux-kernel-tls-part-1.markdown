@@ -65,7 +65,7 @@ int tcp_set_ulp(struct sock *sk, const char *name)
 }
 ```
 
-The `__tcp_set_ulp()` will
+The `__tcp_set_ulp()` will calls the TLS init handler to setting the socket ULP [1].
 
 ``` c
 static int __tcp_set_ulp(struct sock *sk, const struct tcp_ulp_ops *ulp_ops)
@@ -74,7 +74,7 @@ static int __tcp_set_ulp(struct sock *sk, const struct tcp_ulp_ops *ulp_ops)
     int err;
 
     // [...]
-    err = ulp_ops->init(sk);
+    err = ulp_ops->init(sk); // [1]
     icsk->icsk_ulp_ops = ulp_ops;
     return 0;
 }
