@@ -1838,7 +1838,7 @@ static int cryptd_aead_decrypt_enqueue(struct aead_request *req)
 
 Our analysis is based on the kernel v6.6.17.
 
-### 4.1. CVE-2024-26585
+### 4.1. CVE-2024-26583
 
 #### 4.1.1. Patch
 
