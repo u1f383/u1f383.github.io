@@ -5,6 +5,7 @@ categories: linux
 ---
 
 - Part1: [Linux Kernel TLS Part 1]({% post_url 2025-01-20-linux-kernel-tls-part-1 %})
+- Part2: [Linux Kernel TLS Part 2]({% post_url 2025-01-21-linux-kernel-tls-part-2 %})
 
 Last week, I prepared an introduction to Linux kernel TLS for my study group. You can check out the [slide](/slides/study_groups/Deephacking-20250119.pdf) for a general concept.
 
