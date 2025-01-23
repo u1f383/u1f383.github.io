@@ -1295,6 +1295,10 @@ int tls_sw_recvmsg(struct sock *sk,
         struct tls_decrypt_arg darg;
 
         // [...]
+        err = tls_rx_rec_wait(sk, psock, flags & MSG_DONTWAIT,
+				      released);
+
+        // [...]
         tlm = tls_msg(tls_strp_msg(ctx)); // ctx->strp.anchor
         
         // [...]
@@ -1356,6 +1360,24 @@ static int tls_do_decryption(struct sock *sk,
 
     // [...]
 }
+```
+
+The `control` field is set within the `tls_rx_rec_wait()` function, which determines its value based on strp (`tls_strparser`) object. The strp object is condfigured during reception. The execution flow is as follows:
+
+```
+Softirq
+=> tcp_v4_rcv()
+==> tcp_v4_do_rcv()
+===> tcp_rcv_established()
+====> tcp_data_queue()
+=====> tls_data_ready() (sk->sk_data_ready())
+======> tls_strp_check_rcv()
+=======> tls_strp_read_sock() - Verifies the packet size and configures the tls_strparser object.
+
+sys_recvmsg
+=> tls_sw_recvmsg()
+==> tls_rx_rec_wait()
+===> tls_strp_msg_load() - Configures the TLS message using the tls_strparser object
 ```
 
 The async capability is configured during the RX setup. While TLS version is user-controllable [5], only algorithms with the `CRYPTO_ALG_ASYNC` flag support asynchronous operations [6].
