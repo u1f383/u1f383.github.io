@@ -1377,7 +1377,7 @@ Softirq
 sys_recvmsg
 => tls_sw_recvmsg()
 ==> tls_rx_rec_wait()
-===> tls_strp_msg_load() - Configures the TLS message using the tls_strparser object
+===> tls_strp_msg_load() - Configures the TLS message (tlm) using the tls_strparser (strp) object.
 ```
 
 The async capability is configured during the RX setup. While TLS version is user-controllable [5], only algorithms with the `CRYPTO_ALG_ASYNC` flag support asynchronous operations [6].
