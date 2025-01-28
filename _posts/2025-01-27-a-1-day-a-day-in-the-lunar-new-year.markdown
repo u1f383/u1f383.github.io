@@ -180,3 +180,120 @@ __sys_sendmsg()
 可以想像到，觸發漏洞的執行流程應該會如下圖所示：
 
 <img src="/assets/image-20250128010841476.png" alt="image-20250128010841476" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
+## Day2 (1/28) ksmbd: fix Out-of-Bounds Write in ksmbd_vfs_stream_write
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=313dab082289e460391c82d855430ec8a28ddf81)
+
+Patch 新增了 `smb2_write()` 內的變數 `offset` 不能小於 0 的檢查：
+
+``` diff
+@@ -6882,6 +6882,8 @@ int smb2_write(struct ksmbd_work *work)
+     }
+ 
+     offset = le64_to_cpu(req->Offset);
++    if (offset < 0)
++        return -EINVAL;
+```
+
+Function `smb2_write()` 是 ksmbd (Kernel SMB Daemon，也就是 In-kernel SMB Server) 用來處理寫入請求 (`SMB2_WRITE_HE`) 的 handler。該 function 會使用請求的 `Offset` [1] 與 `Length` [2] 欄位作為存取檔案的偏移與資料量，傳入 `ksmbd_vfs_write()` [3] 來完成寫入操作。
+
+``` c
+typedef long long __kernel_loff_t;
+typedef __kernel_loff_t loff_t;
+
+int smb2_write(struct ksmbd_work *work)
+{
+    loff_t offset;
+    size_t length;
+    // [...]
+    offset = le64_to_cpu(req->Offset); // [1]
+    length = le32_to_cpu(req->Length); // [2]
+
+    if (is_rdma_channel == false) {
+        // [...]
+        data_buf = (char *)(((char *)&req->hdr.ProtocolId) +
+                    le16_to_cpu(req->DataOffset));
+        // [...]
+        err = ksmbd_vfs_write(work, fp, data_buf, length, &offset, // [3]
+                      writethrough, &nbytes);
+    }
+    // [...]
+}
+```
+
+當目標檔案是 stream 類型時 [4]，`ksmbd_vfs_write()` 會再呼叫 `ksmbd_vfs_stream_write()` [5]，而傳入的參數 `pos` 為我們可控成負數值的 offset。
+
+``` c
+static inline bool ksmbd_stream_fd(struct ksmbd_file *fp)
+{
+    return fp->stream.name != NULL;
+}
+
+int ksmbd_vfs_write(struct ksmbd_work *work, struct ksmbd_file *fp,
+            char *buf, size_t count, loff_t *pos, bool sync,
+            ssize_t *written)
+{
+    // [...]
+    loff_t offset = *pos;
+    int err = 0;
+    // [...]
+
+    if (ksmbd_stream_fd(fp)) { // [4]
+        err = ksmbd_vfs_stream_write(fp, buf, pos, count); // [5]
+        // [...]
+    }
+}
+```
+
+如果 stream file 沒初始化，`ksmbd_vfs_stream_write()` 會先分配一塊記憶體給他 [6]，之後再把要寫入的資料複製到該記憶體內 [7]。然而，當傳入的 offset (`*pos`) 為負數時，複製資料時就會觸發 out-of-bound write。
+
+``` c
+static int ksmbd_vfs_stream_write(struct ksmbd_file *fp, char *buf, loff_t *pos,
+                  size_t count)
+{
+    char *stream_buf = NULL, *wbuf;
+    // [...]
+    wbuf = kvzalloc(size, GFP_KERNEL); // [6]
+    // [...]
+    stream_buf = wbuf;
+    memcpy(&stream_buf[*pos], buf, count); // [7]
+    // [...]
+}
+```
+
+對 ksmbd 熟悉的朋友可能會知道，執行 command handler 前會先呼叫 `smb2_get_data_area_len()`。該 function 會根據不同的 command，檢查傳入的欄位是否合法，但他並沒有檢查有問題的欄位 `Offset`。
+
+``` c
+static int smb2_get_data_area_len(unsigned int *off, unsigned int *len,
+                  struct smb2_hdr *hdr)
+{
+    switch (hdr->Command) {
+    // [...]
+    case SMB2_WRITE:
+        if (((struct smb2_write_req *)hdr)->DataOffset ||
+            ((struct smb2_write_req *)hdr)->Length) {
+            // [8]
+            *off = max_t(unsigned short int,
+                     le16_to_cpu(((struct smb2_write_req *)hdr)->DataOffset),
+                     offsetof(struct smb2_write_req, Buffer));
+            *len = le32_to_cpu(((struct smb2_write_req *)hdr)->Length);
+            break;
+        }
+
+        *off = le16_to_cpu(((struct smb2_write_req *)hdr)->WriteChannelInfoOffset);
+        *len = le16_to_cpu(((struct smb2_write_req *)hdr)->WriteChannelInfoLength);
+        break;
+    // [...]
+    }
+
+    if (*off > 4096) {
+        // [...]
+        ret = -EINVAL;
+    } else if ((u64)*off + *len > MAX_STREAM_PROT_LEN) {
+        // [...]
+        ret = -EINVAL;
+    }
+
+    return ret;
+}
+```
