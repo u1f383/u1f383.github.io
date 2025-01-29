@@ -297,3 +297,193 @@ static int smb2_get_data_area_len(unsigned int *off, unsigned int *len,
     return ret;
 }
 ```
+
+## Day3 (1/29) vsock/virtio: cancel close work in the destructor
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/net?id=df137da9d6d166e87e40980e36eb8e0bc90483ef)
+
+AF_VSOCK 是一種 socket family，用於處理 hypervisor 與 guest 之間的溝通。Function `vsock_assign_transport()` 會在一個 vsock 進行連線時被呼叫。當該 function 檢查 socket 已經初始化過 transport 時，會依序執行 release handler [1] 與 destructor [2]。
+
+``` c
+int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
+{
+    // [...]
+    if (vsk->transport) {
+        // [...]
+        vsk->transport->release(vsk); // [1]
+        vsock_deassign_transport(vsk);
+    }
+}
+
+static void vsock_deassign_transport(struct vsock_sock *vsk)
+{
+    // [...]
+    vsk->transport->destruct(vsk); // [2]
+    // [...]
+    vsk->transport = NULL;
+}
+```
+
+以 Loopback 類型的 transport 為例，release handler 與 destructor 分別為 `virtio_transport_release()` 以及 `virtio_transport_destruct()`。
+
+``` c
+static struct virtio_transport loopback_transport = {
+    .transport = {
+        // [...]
+        .destruct = virtio_transport_destruct,
+        .release = virtio_transport_release,
+        // [...]
+    }
+    // [...]
+};
+```
+
+Release handler (`virtio_transport_destruct()`) 會呼叫 `virtio_transport_close()` [3] 來關閉 transport。該 function 會在一些條件下，延遲 close socket 的執行。實際上是 dispatch 給 worker 來執行 [4]。
+
+``` c
+void virtio_transport_release(struct vsock_sock *vsk)
+{
+    struct sock *sk = &vsk->sk;
+    bool remove_sock = true;
+
+    if (sk->sk_type == SOCK_STREAM || sk->sk_type == SOCK_SEQPACKET)
+        remove_sock = virtio_transport_close(vsk); // [3]
+
+    if (remove_sock) {
+        // [...]
+    }
+}
+
+static bool virtio_transport_close(struct vsock_sock *vsk)
+{
+    struct sock *sk = &vsk->sk;
+
+    // [...]
+    sock_hold(sk); // refcount++
+    INIT_DELAYED_WORK(&vsk->close_work,
+              virtio_transport_close_timeout); // [4]
+    vsk->close_work_scheduled = true;
+    schedule_delayed_work(&vsk->close_work, VSOCK_CLOSE_TIMEOUT);
+    return false;
+}
+```
+
+Destructor (`virtio_transport_release()`) 則會釋放 bind 在該 vsock transport 的 `virtio_vsock_sock` object [5]。
+
+``` c
+void virtio_transport_destruct(struct vsock_sock *vsk)
+{
+    struct virtio_vsock_sock *vvs = vsk->trans;
+
+    kfree(vvs); // [5]
+    vsk->trans = NULL;
+}
+```
+
+如果 close callback function `virtio_transport_close_timeout()` 發現 socket 的 `SOCK_DONE` flag 沒有設起來 [6]，就會先呼叫 `virtio_transport_reset()` 發送 `VIRTIO_VSOCK_OP_RST` packet 給 Loopback vsock worker，接著呼叫 `virtio_transport_do_close()` 來關閉 vsock [7]。
+
+``` c
+static void virtio_transport_close_timeout(struct work_struct *work)
+{
+    struct vsock_sock *vsk =
+        container_of(work, struct vsock_sock, close_work.work);
+    struct sock *sk = sk_vsock(vsk);
+
+    sock_hold(sk); // refcount++
+    lock_sock(sk);
+
+    if (!sock_flag(sk, SOCK_DONE)) { // [6]
+        virtio_transport_reset(vsk, NULL);
+        virtio_transport_do_close(vsk, false); // [7]
+    }
+
+    vsk->close_work_scheduled = false;
+
+    release_sock(sk);
+    sock_put(sk); // refcount--
+}
+```
+
+`virtio_transport_do_close()` 會 mark socket 成 `SOCK_DONE`，之後呼叫 `vsock_stream_has_data()` 檢查 socket 內是否還有資料仍未處理，有的話會把 TCP 的狀態更新成關閉中 [8]。參考先前介紹的執行流程，該 function 會接著呼叫 `virtio_transport_remove_sock()` [9] 從 global object 移除與此 vsock 有關的 bound 與 connected vsock 資訊。
+
+``` c
+static void virtio_transport_do_close(struct vsock_sock *vsk,
+                      bool cancel_timeout /* false */)
+{
+    struct sock *sk = sk_vsock(vsk);
+
+    sock_set_flag(sk, SOCK_DONE);
+    vsk->peer_shutdown = SHUTDOWN_MASK;
+    if (vsock_stream_has_data(vsk) <= 0)
+        sk->sk_state = TCP_CLOSING; // [8]
+    sk->sk_state_change(sk);
+
+    if (vsk->close_work_scheduled && // true
+        (!cancel_timeout || cancel_delayed_work(&vsk->close_work))) {
+        vsk->close_work_scheduled = false;
+
+        virtio_transport_remove_sock(vsk); // [9]
+        sock_put(sk); // refcount--
+    }
+}
+```
+
+不論是 `vsock_stream_has_data()` [10] 還是 `virtio_transport_remove_sock()` [11]，都會存取到 bind 在 transport 的 `virtio_vsock_sock` object，但有可能該 object 已經提前在 destructor (`virtio_transport_destruct()`) 被釋放掉，這樣就會有 **Use-After-Free** 的錯誤。
+
+``` c
+s64 vsock_stream_has_data(struct vsock_sock *vsk)
+{
+    return vsk->transport->stream_has_data(vsk); // <-----------------, &virtio_transport_stream_has_data
+}
+
+s64 virtio_transport_stream_has_data(struct vsock_sock *vsk)
+{
+    struct virtio_vsock_sock *vvs = vsk->trans;
+    s64 bytes;
+
+    spin_lock_bh(&vvs->rx_lock); // [10]
+    bytes = vvs->rx_bytes; // [10]
+    spin_unlock_bh(&vvs->rx_lock); // [10]
+
+    return bytes;
+}
+
+static void virtio_transport_remove_sock(struct vsock_sock *vsk)
+{
+    struct virtio_vsock_sock *vvs = vsk->trans;
+    // [...]
+    __skb_queue_purge(&vvs->rx_queue); // [11]
+    // [...]
+}
+```
+
+Patch 確保了再釋放 `virtio_vsock_sock` object 之前 callback function 已經執行完。
+
+``` diff
+@@ -1109,6 +1112,8 @@ void virtio_transport_destruct(struct vsock_sock *vsk)
+ {
+     struct virtio_vsock_sock *vvs = vsk->trans;
+ 
++    virtio_transport_cancel_close_work(vsk, true);
++
+     kfree(vvs);
+     vsk->trans = NULL;
+ }
+```
+
+Function `virtio_transport_cancel_close_work()` 會呼叫 `cancel_delayed_work()`。如果 work 正在執行，那就等到他執行結束；如果 work 為 pending 狀態，就直接取消。這樣就可以確保會使用到 `virtio_vsock_sock` object 的 callback function 會在 destructor 釋放此 object 之前就執行完。
+
+``` c
+static void virtio_transport_cancel_close_work(struct vsock_sock *vsk,
+                           bool cancel_timeout)
+{
+    struct sock *sk = sk_vsock(vsk);
+
+    if (vsk->close_work_scheduled &&
+        (!cancel_timeout || cancel_delayed_work(&vsk->close_work))) {
+        vsk->close_work_scheduled = false;
+
+        virtio_transport_remove_sock(vsk);
+        sock_put(sk);
+    }
+}
+```
