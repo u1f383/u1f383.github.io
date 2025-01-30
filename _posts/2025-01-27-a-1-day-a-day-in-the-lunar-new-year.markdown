@@ -487,3 +487,98 @@ static void virtio_transport_cancel_close_work(struct vsock_sock *vsk,
     }
 }
 ```
+
+## Day4 (1/30) xsk: fix OOB map writes when deleting elements
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=32cd3db7de97c0c7a018756ce66244342fd583f0)
+
+AF_XDP 是一種 socket family，是 XDP (express data path) interface，用 eBPF 在網路封包進到 stack 前就先過濾一次的機制。此種類型的 socket 需要在當前 namespace 有 `CAP_NET_RAW` 權限才能建立 [1]。
+
+``` c
+static const struct net_proto_family xsk_family_ops = {
+	.family = PF_XDP,
+	.create = xsk_create, // <------------
+	.owner	= THIS_MODULE,
+};
+
+static int xsk_create(struct net *net, struct socket *sock, int protocol,
+		      int kern)
+{
+	// [...]
+	
+    if (!ns_capable(net->user_ns, CAP_NET_RAW)) // [1]
+		return -EPERM;
+	if (sock->type != SOCK_RAW)
+		return -ESOCKTNOSUPPORT;
+	if (protocol)
+		return -EPROTONOSUPPORT;
+
+    // [...]
+}
+```
+
+該漏洞的 patch 將 function `xsk_map_delete_elem()` 內的 `k` 變數從 signed 改成 unsigned。
+
+``` diff
+@@ -224,7 +224,7 @@ static long xsk_map_delete_elem(struct bpf_map *map, void *key)
+ 	struct xsk_map *m = container_of(map, struct xsk_map, map);
+ 	struct xdp_sock __rcu **map_entry;
+ 	struct xdp_sock *old_xs;
+-	int k = *(u32 *)key;
++	u32 k = *(u32 *)key;
+```
+
+該 function 用來在 eBPF program 中刪除 XSK map 的 element。XSK 指的就是 XDP socket，而 XSK map 為 eBPF program 中用來存放 XDP socket 的記憶體空間。
+
+``` c
+const struct bpf_map_ops xsk_map_ops = {
+    // [...]
+	.map_update_elem = xsk_map_update_elem,
+	.map_delete_elem = xsk_map_delete_elem,
+    // [...]
+};
+```
+
+不過如果要在 eBPF program 中使用這種類型的 map，需要在 init namespace 中有 root 的權限 [2]，因此一般使用者存取不到。
+
+``` c
+#if defined(CONFIG_XDP_SOCKETS)
+BPF_MAP_TYPE(BPF_MAP_TYPE_XSKMAP, xsk_map_ops)
+#endif
+
+static int map_create(union bpf_attr *attr)
+{
+    // [...]
+	switch (map_type) {
+        // [...]
+        case BPF_MAP_TYPE_XSKMAP:
+		if (!capable(CAP_NET_ADMIN)) // [2]
+			return -EPERM;
+		break;
+        // [...]
+    }
+}
+```
+
+因為 key 是使用者可控，加上 `xsk_map_delete_elem()` 並沒有對 key value 的 lower bound 做檢查 [3]，因此在存取 map entry 時就會觸發 Out-Of-Bounds access [4, 5]。
+
+``` c
+static long xsk_map_delete_elem(struct bpf_map *map, void *key)
+{
+	struct xsk_map *m = container_of(map, struct xsk_map, map);
+	struct xdp_sock __rcu **map_entry;
+	struct xdp_sock *old_xs;
+	int k = *(u32 *)key;
+
+	if (k >= map->max_entries) // [3]
+		return -EINVAL;
+
+	spin_lock_bh(&m->lock);
+	map_entry = &m->xsk_map[k]; // [4]
+	old_xs = unrcu_pointer(xchg(map_entry, NULL));
+	if (old_xs)
+		xsk_map_sock_delete(old_xs, map_entry); // [5]
+	spin_unlock_bh(&m->lock);
+
+	return 0;
+}
+```
