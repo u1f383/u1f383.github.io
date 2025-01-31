@@ -495,22 +495,22 @@ AF_XDP 是一種 socket family，是 XDP (express data path) interface，用 eBP
 
 ``` c
 static const struct net_proto_family xsk_family_ops = {
-	.family = PF_XDP,
-	.create = xsk_create, // <------------
-	.owner	= THIS_MODULE,
+    .family = PF_XDP,
+    .create = xsk_create, // <------------
+    .owner    = THIS_MODULE,
 };
 
 static int xsk_create(struct net *net, struct socket *sock, int protocol,
-		      int kern)
+              int kern)
 {
-	// [...]
-	
+    // [...]
+    
     if (!ns_capable(net->user_ns, CAP_NET_RAW)) // [1]
-		return -EPERM;
-	if (sock->type != SOCK_RAW)
-		return -ESOCKTNOSUPPORT;
-	if (protocol)
-		return -EPROTONOSUPPORT;
+        return -EPERM;
+    if (sock->type != SOCK_RAW)
+        return -ESOCKTNOSUPPORT;
+    if (protocol)
+        return -EPROTONOSUPPORT;
 
     // [...]
 }
@@ -520,11 +520,11 @@ static int xsk_create(struct net *net, struct socket *sock, int protocol,
 
 ``` diff
 @@ -224,7 +224,7 @@ static long xsk_map_delete_elem(struct bpf_map *map, void *key)
- 	struct xsk_map *m = container_of(map, struct xsk_map, map);
- 	struct xdp_sock __rcu **map_entry;
- 	struct xdp_sock *old_xs;
--	int k = *(u32 *)key;
-+	u32 k = *(u32 *)key;
+     struct xsk_map *m = container_of(map, struct xsk_map, map);
+     struct xdp_sock __rcu **map_entry;
+     struct xdp_sock *old_xs;
+-    int k = *(u32 *)key;
++    u32 k = *(u32 *)key;
 ```
 
 該 function 用來在 eBPF program 中刪除 XSK map 的 element。XSK 指的就是 XDP socket，而 XSK map 為 eBPF program 中用來存放 XDP socket 的記憶體空間。
@@ -532,8 +532,8 @@ static int xsk_create(struct net *net, struct socket *sock, int protocol,
 ``` c
 const struct bpf_map_ops xsk_map_ops = {
     // [...]
-	.map_update_elem = xsk_map_update_elem,
-	.map_delete_elem = xsk_map_delete_elem,
+    .map_update_elem = xsk_map_update_elem,
+    .map_delete_elem = xsk_map_delete_elem,
     // [...]
 };
 ```
@@ -548,12 +548,12 @@ BPF_MAP_TYPE(BPF_MAP_TYPE_XSKMAP, xsk_map_ops)
 static int map_create(union bpf_attr *attr)
 {
     // [...]
-	switch (map_type) {
+    switch (map_type) {
         // [...]
         case BPF_MAP_TYPE_XSKMAP:
-		if (!capable(CAP_NET_ADMIN)) // [2]
-			return -EPERM;
-		break;
+        if (!capable(CAP_NET_ADMIN)) // [2]
+            return -EPERM;
+        break;
         // [...]
     }
 }
@@ -564,21 +564,144 @@ static int map_create(union bpf_attr *attr)
 ``` c
 static long xsk_map_delete_elem(struct bpf_map *map, void *key)
 {
-	struct xsk_map *m = container_of(map, struct xsk_map, map);
-	struct xdp_sock __rcu **map_entry;
-	struct xdp_sock *old_xs;
-	int k = *(u32 *)key;
+    struct xsk_map *m = container_of(map, struct xsk_map, map);
+    struct xdp_sock __rcu **map_entry;
+    struct xdp_sock *old_xs;
+    int k = *(u32 *)key;
 
-	if (k >= map->max_entries) // [3]
-		return -EINVAL;
+    if (k >= map->max_entries) // [3]
+        return -EINVAL;
 
-	spin_lock_bh(&m->lock);
-	map_entry = &m->xsk_map[k]; // [4]
-	old_xs = unrcu_pointer(xchg(map_entry, NULL));
-	if (old_xs)
-		xsk_map_sock_delete(old_xs, map_entry); // [5]
-	spin_unlock_bh(&m->lock);
+    spin_lock_bh(&m->lock);
+    map_entry = &m->xsk_map[k]; // [4]
+    old_xs = unrcu_pointer(xchg(map_entry, NULL));
+    if (old_xs)
+        xsk_map_sock_delete(old_xs, map_entry); // [5]
+    spin_unlock_bh(&m->lock);
 
-	return 0;
+    return 0;
 }
 ```
+
+## Day5 (1/31) af_packet: fix vlan_get_tci() vs MSG_PEEK
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=7aa78d0d8546d8ce5a764add3f55d72e707c18f1)
+
+Patch 調整了 function `vlan_get_tci()` 的執行邏輯，我們需要先知道怎麼走到這個 function。
+
+AF_PACKET 為 Linux kernel Low-level packet interface 的實作。當建立一個 AF_PACKET socket 時，會由 AF_PACKET 的 create handler `packet_create()` 來處理。
+
+``` c
+static const struct net_proto_family packet_family_ops = {
+    .family =    PF_PACKET,
+    .create =    packet_create,
+    // [...]
+};
+```
+
+`packet_create()` 檢查是否 process 在當前 namespace 有足夠的權限 [1]，並且只支援部分的 socket type [2]。新增的 socket 其 type ops 為 `packet_ops`。
+
+``` c
+static int packet_create(struct net *net, struct socket *sock, int protocol,
+             int kern)
+{
+    // [...]
+    if (!ns_capable(net->user_ns, CAP_NET_RAW)) // [1]
+        return -EPERM;
+    if (sock->type != SOCK_DGRAM && sock->type != SOCK_RAW && // [2]
+        sock->type != SOCK_PACKET)
+        return -ESOCKTNOSUPPORT;
+    // [...]
+    sock->ops = &packet_ops;
+    // [...]
+}
+```
+
+當 AF_PACKET socket 呼叫 `sys_recvmsg()` 時，底層會由 recvmsg handler `packet_recvmsg()` 來處理 [3]。在解析封包時，如果 packet socket 的 `PACKET_SOCK_AUXDATA` flag 有被設上 [4]，就會用 control block (CB) 內的 interface index 來取的對應的 device object [5]，並以此為參數呼叫 `vlan_get_tci()` [6]。
+
+``` c
+static const struct proto_ops packet_ops = {
+    .family   =  PF_PACKET,
+    // [...]
+    .sendmsg  =  packet_sendmsg,
+    .recvmsg  =  packet_recvmsg, // [3]
+    // [...]
+};
+
+#define PACKET_SKB_CB(__skb)    ((struct packet_skb_cb *)((__skb)->cb))
+static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
+              int flags)
+{
+    struct sock *sk = sock->sk;
+    // [...]
+    skb = skb_recv_datagram(sk, flags, &err);
+
+    // [...]
+    if (packet_sock_flag(pkt_sk(sk), PACKET_SOCK_AUXDATA)) { // [4]
+        struct sockaddr_ll *sll = &PACKET_SKB_CB(skb)->sa.ll;
+        // [...]
+        else if (unlikely(sock->type == SOCK_DGRAM && eth_type_vlan(skb->protocol))) {
+            dev = dev_get_by_index_rcu(sock_net(sk), sll->sll_ifindex); // [5]
+            if (dev) {
+                aux.tp_vlan_tci = vlan_get_tci(skb, dev); // [6]
+                // [...]
+            }
+        }
+    }
+}
+```
+
+`vlan_get_tci()` 用來從 packet 中取得 VLAN 標記 (TCI, Tag Control Information)。該 function 會先呼叫 `skb_push()` 來調整 packet object 的 metadata [7]，再取得封包內容並回傳 [8]。
+
+``` c
+static u16 vlan_get_tci(struct sk_buff *skb, struct net_device *dev)
+{
+    u8 *skb_orig_data = skb->data;
+    int skb_orig_len = skb->len;
+    struct vlan_hdr vhdr, *vh;
+    unsigned int header_len;
+
+    // [...]
+    skb_push(skb, skb->data - skb_mac_header(skb)); // [7]
+    vh = skb_header_pointer(skb, header_len, sizeof(vhdr), &vhdr);
+    // [...]
+    return ntohs(vh->h_vlan_TCI); // [8]
+}
+
+void *skb_push(struct sk_buff *skb, unsigned int len)
+{
+    skb->data -= len;
+    skb->len  += len;
+    if (unlikely(skb->data < skb->head))
+        skb_under_panic(skb, len, __builtin_return_address(0));
+    return skb->data;
+}
+```
+
+然而，用於取得 packet object 的 function `skb_recv_datagram()` 會在底層呼叫 `__skb_try_recv_from_queue()`，並在 syscall 的參數 `flags` 有包含 `MSG_PEEK` 時更新 refcount 就回傳 packet object [9]，而不是從 packet queue 中移除 [10]。
+
+``` c
+struct sk_buff *__skb_try_recv_from_queue(/* ... */)
+{
+    bool peek_at_off = false;
+    struct sk_buff *skb;
+    int _off = 0;
+
+    // [...]
+    *last = queue->prev;
+    skb_queue_walk(queue, skb) {
+        if (flags & MSG_PEEK) {
+            // [...]
+            refcount_inc(&skb->users); // [9]
+        } else {
+            __skb_unlink(skb, queue); // [10]
+        }
+        // [...]
+        return skb;
+    }
+    // [...]
+}
+```
+
+也就是說，我們可以透過 `MSG_PEEK` 不斷觸發 `skb_push()`，這樣就能夠一直更新 skb metadata。直到 data pointer 比 header 還要前面時，function `skb_under_panic()` 就會被執行並觸發 kernel panic。
+
+而 patch 則是將 `vlan_get_tci()` 的參數 `skb` 改成 const pointer，確保該 object 的成員不會在 function 內被更新。
