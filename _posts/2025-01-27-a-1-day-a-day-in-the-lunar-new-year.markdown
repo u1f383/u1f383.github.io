@@ -432,7 +432,7 @@ static void virtio_transport_do_close(struct vsock_sock *vsk,
 ``` c
 s64 vsock_stream_has_data(struct vsock_sock *vsk)
 {
-    return vsk->transport->stream_has_data(vsk); // <-----------------, &virtio_transport_stream_has_data
+    return vsk->transport->stream_has_data(vsk); // <---------------, &virtio_transport_stream_has_data
 }
 
 s64 virtio_transport_stream_has_data(struct vsock_sock *vsk)
@@ -496,7 +496,7 @@ AF_XDP 是一種 socket family，是 XDP (express data path) interface，用 eBP
 ``` c
 static const struct net_proto_family xsk_family_ops = {
     .family = PF_XDP,
-    .create = xsk_create, // <------------
+    .create = xsk_create, // <---------------
     .owner    = THIS_MODULE,
 };
 
@@ -705,3 +705,411 @@ struct sk_buff *__skb_try_recv_from_queue(/* ... */)
 也就是說，我們可以透過 `MSG_PEEK` 不斷觸發 `skb_push()`，這樣就能夠一直更新 skb metadata。直到 data pointer 比 header 還要前面時，function `skb_under_panic()` 就會被執行並觸發 kernel panic。
 
 而 patch 則是將 `vlan_get_tci()` 的參數 `skb` 改成 const pointer，確保該 object 的成員不會在 function 內被更新。
+
+## Day6 (2/01)
+### KEYS: prevent NULL pointer dereference in find_asymmetric_key()
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=0d3b0706ada15c333e6f9faf19590ff715e45d1e)
+
+在 function `find_asymmetric_key()` 的開頭有用 `WARN_ON()` 檢查傳入的參數 `id_{0,1,2}` 是否都是 NULL pointer [1]，但是後續 if-else 的最後還是會直接存取 `id_2` [2]，這樣就會有 null-ptr-deref 的問題。
+
+``` c
+struct key *find_asymmetric_key(struct key *keyring,
+                const struct asymmetric_key_id *id_0,
+                const struct asymmetric_key_id *id_1,
+                const struct asymmetric_key_id *id_2,
+                bool partial)
+{
+    struct key *key;
+    key_ref_t ref;
+    const char *lookup;
+    char *req, *p;
+    int len;
+
+    WARN_ON(!id_0 && !id_1 && !id_2); // [1]
+
+    if (id_0) {
+        lookup = id_0->data;
+        len = id_0->len;
+    } else if (id_1) {
+        lookup = id_1->data;
+        len = id_1->len;
+    } else {
+        lookup = id_2->data; // [2]
+        len = id_2->len;
+    }
+    // [...]
+}
+```
+
+Patch 也很簡單，就新增一個 `id_2` 的 else-if block，然後把原本的 `WARN_ON()` 移動到最後的 else。
+
+``` diff
+@@ -60,17 +60,18 @@ struct key *find_asymmetric_key(struct key *keyring,
+// [...]
+
+-    WARN_ON(!id_0 && !id_1 && !id_2);
+-
+
+// [...]
+
+-    } else {
++    } else if (id_2) {
+         lookup = id_2->data;
+         len = id_2->len;
++    } else {
++        WARN_ON(1);
++        return ERR_PTR(-EINVAL);
+     }
+```
+
+漏洞本身很直觀，不過 `find_asymmetric_key()` 會在什麼情況下被呼叫？
+
+System call `add_key` 能在 Linux kernel key management 註冊一把 key。呼叫時需要傳入 `type` 來指定 key 的類型 [3]，而底層 function 會遍歷 linked list `key_types_list` 來找對應類型名稱的 `key_type` object [4]。
+
+``` c
+SYSCALL_DEFINE5(add_key, const char __user *, _type, /* ... */)
+{
+    char type[32];
+    
+    // [...]
+    ret = key_get_type_from_user(type, _type, sizeof(type)); // [3]
+    
+    // [...]
+    key_ref = key_create_or_update(keyring_ref, type, description, // <---------------
+                       payload, plen, KEY_PERM_UNDEF,
+                       KEY_ALLOC_IN_QUOTA);
+    
+    // [...]
+}
+key_ref_t key_create_or_update(key_ref_t keyring_ref,
+                   const char *type,
+                   /* ... */)
+{
+    return __key_create_or_update(keyring_ref, type, description, payload, // <---------------
+                      plen, perm, flags, true);
+}
+
+static key_ref_t __key_create_or_update(key_ref_t keyring_ref,
+                    const char *type,
+                    /* ... */)
+{
+    struct keyring_index_key index_key = {
+        // [...]
+    };
+
+    index_key.type = key_type_lookup(type); // <---------------
+    // [...]
+}
+
+struct key_type *key_type_lookup(const char *type)
+{
+    struct key_type *ktype;
+
+    // [...]
+    list_for_each_entry(ktype, &key_types_list, link) { // [4]
+        if (strcmp(ktype->name, type) == 0)
+            goto found_kernel_type;
+    }
+    // [...]
+found_kernel_type:
+    return ktype;
+}
+```
+
+Subsystem 會在 kernel booting 時呼叫 `register_key_type()` 註冊 `key_type` object 到 linked list。`key_type` object 定義了 parsing、lookup asymmetric key 等相關操作時所呼叫的 handler。
+
+Key management 的初始化 function `key_init()` 會註冊下面幾種 key type：
+- "keyring" (`key_type_keyring`)
+- ".dead" (`key_type_dead`)
+- "user" (`key_type_user`)
+- "logon" (`key_type_logon`)
+
+而 kernelCTF 的執行環境還會註冊下面幾種：
+- "blacklist" (`key_type_blacklist`)
+- "id_resolver" (`key_type_id_resolver`)
+- "id_legacy" (`key_type_id_resolver_legacy`)
+- "cifs.spnego" (`cifs_spnego_key_type`)
+- "cifs.idmap" (`cifs_idmap_key_type`)
+- "asymmetric" (`key_type_asymmetric`)
+- "dns_resolver" (`key_type_dns_resolver`)
+
+"asymmetric" 類型的 key 會在搜尋 restriction 時呼叫 `asymmetric_lookup_restriction()`。
+
+``` c
+struct key_type key_type_asymmetric = {
+    .name = "asymmetric",
+    // [...]
+    .lookup_restriction = asymmetric_lookup_restriction, // <---------------
+    // [...]
+};
+```
+
+`asymmetric_lookup_restriction()` 會用 `restrict_link_by_key_or_keyring()` 作為 check handler [5]。
+
+``` c
+static struct key_restriction *asymmetric_lookup_restriction(
+    const char *restriction)
+{
+    //[...]
+    if ((strcmp(restrict_method, "key_or_keyring") == 0) && next) {
+        // [...]
+        key_restrict_link_func_t link_fn =
+            restrict_link_by_key_or_keyring;
+        
+        // [...]
+        ret = asymmetric_restriction_alloc(link_fn, key); // <---------------
+    }
+    // [...]
+}
+
+static struct key_restriction *asymmetric_restriction_alloc(
+    key_restrict_link_func_t check,
+    struct key *key)
+{
+    struct key_restriction *keyres =
+        kzalloc(sizeof(struct key_restriction), GFP_KERNEL);
+    // [...]
+    keyres->check = check; // [5]
+    keyres->key = key;
+    keyres->keytype = &key_type_asymmetric;
+
+    return keyres;
+}
+```
+
+當呼叫 check handler 時，`key_or_keyring_common()` 就會呼叫 `find_asymmetric_key()` [6] 來找 key。不過 `key_or_keyring_common()` 在一開始已經有檢查 `sig->auth_ids[]` 是否存在 [7]，所以該漏洞有可能只是單純被 static tool 分析，或者是從另一條預設沒啟用的執行路徑觸發 (crypto/asymmetric_keys/pkcs7_trust.c)。
+
+``` c
+int restrict_link_by_key_or_keyring(struct key *dest_keyring,
+                    const struct key_type *type,
+                    const union key_payload *payload,
+                    struct key *trusted)
+{
+    return key_or_keyring_common(dest_keyring, type, payload, trusted, // <---------------
+                     false);
+}
+
+static int key_or_keyring_common(struct key *dest_keyring,
+                 const struct key_type *type,
+                 const union key_payload *payload,
+                 struct key *trusted, bool check_dest)
+{
+    // [...]
+    sig = payload->data[asym_auth];
+    if (!sig->auth_ids[0] && !sig->auth_ids[1] && !sig->auth_ids[2]) // [7]
+        return -ENOKEY;
+
+    if (trusted) {
+        if (trusted->type == &key_type_keyring) {
+            // [...]
+            key = find_asymmetric_key(trusted, sig->auth_ids[0], // [6]
+                          sig->auth_ids[1],
+                          sig->auth_ids[2], false);
+        }
+        // [...]
+    }
+}
+```
+
+### epoll: be better about file lifetimes
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=4efaa5acf0a1d2b5947f98abb3acf8bfd966422b)
+
+從 diff 可以知道，`ep_item_poll()` 在執行 polling 會先嘗試呼叫 `epi_fget()` 取得 file object 並增加 refcount。如果 file refcount 已經變為 0，則不更新並直接回傳。
+
+``` diff
++static struct file *epi_fget(const struct epitem *epi)
++{
++    struct file *file;
++
++    file = epi->ffd.file;
++    if (!atomic_long_inc_not_zero(&file->f_count))
++        file = NULL;
++    return file;
++}
+
+ static __poll_t ep_item_poll(const struct epitem *epi, poll_table *pt,
+                  int depth)
+ {
+-    struct file *file = epi->ffd.file;
++    struct file *file = epi_fget(epi);
+     __poll_t res;
+ 
+    // [...]
++    if (!file)
++        return 0;
+    
+    // [...]
+
++    fput(file);
+     return res & epi->event.events;
+ }
+```
+
+透過 `sys_epoll_ctl(EPOLL_CTL_ADD)` 可以在 `epoll_event` 新增一個 item，而 event item 會有一個 reference 指向 file [1]。
+
+``` c
+SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
+        struct epoll_event __user *, event)
+{
+    struct epoll_event epds;
+    // [...]
+    return do_epoll_ctl(epfd, op, fd, &epds, false); // <---------------
+}
+
+int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
+         bool nonblock)
+{
+    // [...]
+    f = fdget(epfd);
+    tf = fdget(fd);
+    ep = f.file->private_data;
+    // [...]
+
+    switch (op) {
+    case EPOLL_CTL_ADD:
+        if (!epi) {
+            epds->events |= EPOLLERR | EPOLLHUP;
+            error = ep_insert(ep, epds, tf.file, fd, full_check); // <---------------
+        }
+    // [...]
+    }
+}
+
+static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
+             struct file *tfile, int fd, int full_check)
+{
+    // [...]
+    epi = kmem_cache_zalloc(epi_cache, GFP_KERNEL); // event item
+    epi->ep = ep;
+    ep_set_ffd(&epi->ffd, tfile, fd);
+    epi->event = *event;
+
+    // [...]
+    attach_epitem(tfile, epi);
+
+    // [...]
+    ep_rbtree_insert(ep, epi);
+
+    // [...]
+    epq.epi = epi;
+    init_poll_funcptr(&epq.pt, ep_ptable_queue_proc);
+    revents = ep_item_poll(epi, &epq.pt, 1);
+    // [...]
+}
+
+static inline void ep_set_ffd(struct epoll_filefd *ffd,
+                  struct file *file, int fd)
+{
+    ffd->file = file; // [1]
+    ffd->fd = fd;
+}
+```
+
+其中 `attach_epitem()` 會建立一個 `epitems_head` object [2] 給目標檔案，而 event item `epi->fllink` 會把所有 polled 的 file 串在一起 [3]。
+
+``` c
+static int attach_epitem(struct file *file, struct epitem *epi)
+{
+    struct epitems_head *to_free = NULL;
+    struct hlist_head *head = NULL;
+    struct eventpoll *ep = NULL;
+
+    // [...]
+    else if (!READ_ONCE(file->f_ep)) {
+        to_free = kmem_cache_zalloc(ephead_cache, GFP_KERNEL); // [2]
+        // [...]
+        head = &to_free->epitems;
+    }
+    spin_lock(&file->f_lock);
+    if (!file->f_ep) {
+        // [...]
+        WRITE_ONCE(file->f_ep, head);
+        to_free = NULL;
+    }
+    hlist_add_head_rcu(&epi->fllink, file->f_ep); // [3]
+    spin_unlock(&file->f_lock);
+    free_ephead(to_free);
+    return 0;
+}
+```
+
+當 file refcount 降為 0 並要被釋放時，`eventpoll_release()` 會根據 file object 是否有 event poll object [4] 來決定要不要執行 `eventpoll_release_file()`，把 epitem 從 eventpoll RB tree 中移除。
+
+``` c
+static void __fput(struct file *file)
+{
+    // [...]
+    eventpoll_release(file); // <---------------
+    // [...]
+}
+static inline void eventpoll_release(struct file *file)
+{
+    if (likely(!READ_ONCE(file->f_ep))) // [4]
+        return;
+    eventpoll_release_file(file);
+}
+```
+
+另一個 system call `epoll_wait` 可以等待 epoll file 發生 I/O event。如果 `ep_events_available()` 發現已經有需要處理的 event [5]，就會呼叫 `ep_send_events()` 通知所有 event item [6]。
+
+``` c
+SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
+        int, maxevents, int, timeout)
+{
+    struct timespec64 to;
+
+    return do_epoll_wait(epfd, events, maxevents, // <---------------
+                 /* ... */);
+}
+
+static int do_epoll_wait(int epfd, struct epoll_event __user *events,
+             int maxevents, struct timespec64 *to)
+{
+    // [...]
+    ep = f.file->private_data;
+    error = ep_poll(ep, events, maxevents, to); // <---------------
+    // [...]
+}
+
+static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
+           int maxevents, struct timespec64 *timeout)
+{
+    // [...]
+    eavail = ep_events_available(ep); // [5]
+    while (1) {
+        if (eavail) {
+            // [...]
+            res = ep_send_events(ep, events, maxevents); // [6]
+            if (res)
+                return res;
+        }
+    }
+    // [...]
+}
+```
+
+`ep_send_events()` 會遍歷每個 event item，嘗試執行 `ep_item_poll()` [7] 來取得 polling event。
+
+``` c
+static int ep_send_events(struct eventpoll *ep,
+              struct epoll_event __user *events, int maxevents)
+{
+    struct epitem *epi, *tmp;
+    
+    // [...]
+    ep_start_scan(ep, &txlist);
+
+    // [...]
+    list_for_each_entry_safe(epi, tmp, &txlist, rdllink) {
+        // [...]
+        revents = ep_item_poll(epi, &pt, 1); // [7]
+        // [...]
+    }
+}
+```
+
+但因為 `ep_item_poll()` 在執行 polling 前不會拿 file refcount，如果此時另一個 thread 在執行 polling handler 的過程中釋放 target file，就有可能 race `fput()` 而造成 Use-After-Free。
+
+不幸的是，所有與 event 相關的操作都會用 eventpoll lock (`ep->mtx`) 保護，這導致就算 target file object 的 refcount 已經為 0，即將被釋放，還是會因為 lock 而卡在 `eventpoll_release_file()`。除非 polling handler 有對檔案做其他操作，否則看起來是 unexploitable 的漏洞。
+
+更詳細的漏洞說明以及 POC，可以參考討論串的其中一則[訊息](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=4efaa5acf0a1d2b5947f98abb3acf8bfd966422b)。
