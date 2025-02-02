@@ -1113,3 +1113,354 @@ static int ep_send_events(struct eventpoll *ep,
 不幸的是，所有與 event 相關的操作都會用 eventpoll lock (`ep->mtx`) 保護，這導致就算 target file object 的 refcount 已經為 0，即將被釋放，還是會因為 lock 而卡在 `eventpoll_release_file()`。除非 polling handler 有對檔案做其他操作，否則看起來是 unexploitable 的漏洞。
 
 更詳細的漏洞說明以及 POC，可以參考討論串的其中一則[訊息](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=4efaa5acf0a1d2b5947f98abb3acf8bfd966422b)。
+
+## Day7 (2/02)
+### nfsd: fix race between laundromat and free_stateid
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=8dd91e8d31febf4d9cca3ae1bb4771d33ae7ee5a)
+
+根據敘述，NFSD (Network File System Daemon) 在下面兩個操作同時執行時會發生 race condition：
+- Laundromat thread - 處理 revoked delegations
+- NFS thread - 處理 client 的 free_stateid 請求
+
+在初始化 NFSv4 Server 時會建立一個 Laundromat thread，定期管理與回收過期的連線 [1]。Thread 的 entry function 為 `laundromat_main()`。
+
+``` c
+static int nfs4_state_create_net(struct net *net)
+{
+    struct nfsd_net *nn = net_generic(net, nfsd_net_id);
+    // [...]
+    INIT_DELAYED_WORK(&nn->laundromat_work, laundromat_main); // [1]
+    // [...]
+}
+```
+
+`laundromat_main()` 會呼叫 `nfs4_laundromat()`，而 `nfs4_laundromat()` 會在 hold state lock 的情況下遍歷 delegation recall linked list [2]，將過期的 delegation 新增到 reaper list [3]。接著該 function 會釋放 state lock 後，並遍歷 reaper list 呼叫 `revoke_delegation()` 來 revoke delegation [4]。
+
+``` c
+static void
+laundromat_main(struct work_struct *laundry)
+{
+    time64_t t;
+    struct delayed_work *dwork = to_delayed_work(laundry);
+    struct nfsd_net *nn = container_of(dwork, struct nfsd_net,
+                       laundromat_work);
+
+    t = nfs4_laundromat(nn);
+    queue_delayed_work(laundry_wq, &nn->laundromat_work, t*HZ);
+}
+
+static time64_t
+nfs4_laundromat(struct nfsd_net *nn)
+{
+    // [...]
+    spin_lock(&state_lock);
+    list_for_each_safe(pos, next, &nn->del_recall_lru) {
+        dp = list_entry (pos, struct nfs4_delegation, dl_recall_lru); // [2]
+        if (!state_expired(&lt, dp->dl_time))
+            break;
+        unhash_delegation_locked(dp, SC_STATUS_REVOKED);
+        list_add(&dp->dl_recall_lru, &reaplist); // [3]
+    }
+    spin_unlock(&state_lock);
+
+    while (!list_empty(&reaplist)) {
+        dp = list_first_entry(&reaplist, struct nfs4_delegation,
+                    dl_recall_lru);
+        list_del_init(&dp->dl_recall_lru);
+        revoke_delegation(dp); // [4]
+    }
+    // [...]
+}
+```
+
+Delegation revocation handler `revoke_delegation()` 上 client lock 後，更新 refcount 且將 delegation object 移動到 revoke list [5]，之後呼叫 `destroy_unhashed_deleg()`。
+
+``` c
+static void revoke_delegation(struct nfs4_delegation *dp)
+{
+    struct nfs4_client *clp = dp->dl_stid.sc_client;
+
+    // [...]
+    if (dp->dl_stid.sc_status &
+        (SC_STATUS_REVOKED | SC_STATUS_ADMIN_REVOKED)) {
+        spin_lock(&clp->cl_lock);
+        
+        refcount_inc(&dp->dl_stid.sc_count);
+        list_add(&dp->dl_recall_lru, &clp->cl_revoked); // [5]
+        
+        spin_unlock(&clp->cl_lock);
+    }
+    destroy_unhashed_deleg(dp);
+}
+```
+
+`destroy_unhashed_deleg()` 會呼叫 `nfs4_unlock_deleg_lease()` 更新 delegation file 對應到的 lease lock [6]，最後呼叫 `nfs4_put_stid()` 釋放 refcount。
+
+``` c
+static void destroy_unhashed_deleg(struct nfs4_delegation *dp)
+{
+    // [...]
+    nfs4_unlock_deleg_lease(dp); // [6]
+    nfs4_put_stid(&dp->dl_stid);
+}
+
+static void nfs4_unlock_deleg_lease(struct nfs4_delegation *dp)
+{
+    struct nfs4_file *fp = dp->dl_stid.sc_file;
+    struct nfsd_file *nf = fp->fi_deleg_file;
+
+    // [...]
+    kernel_setlease(nf->nf_file, F_UNLCK, NULL, (void **)&dp);
+    put_deleg_file(fp);
+}
+```
+
+NFS client 可以發送 procedure `OP_FREE_STATEID` 來釋放 stateid (delegation)。NFSD server 會呼叫 `nfsd4_free_stateid()` 來處理該請求 [7]。
+
+``` c
+static const struct nfsd4_operation nfsd4_ops[] = {
+    // [...]
+    [OP_FREE_STATEID] = {
+        .op_func = nfsd4_free_stateid, // [7]
+        // [...]
+        .op_name = "OP_FREE_STATEID",
+        // [...]
+    },
+    // [...]
+};
+```
+
+`nfsd4_free_stateid()` 發現 stateid 的 type 為 `SC_TYPE_DELEG`，會在 hold client lock 的情況下將 delegation object 從 reaper list 移除 [8]，unlock 後釋放 stateid object [9]。
+
+``` c
+__be32
+nfsd4_free_stateid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+           union nfsd4_op_u *u)
+{
+    struct nfs4_stid *s;
+    struct nfs4_client *cl = cstate->clp;
+    
+    // [...]
+    spin_lock(&cl->cl_lock);
+    s = find_stateid_locked(cl, stateid);
+    
+    // [...]
+    spin_lock(&s->sc_lock);
+    switch (s->sc_type) {
+    case SC_TYPE_DELEG:
+        if (s->sc_status & SC_STATUS_REVOKED) {
+            s->sc_status |= SC_STATUS_CLOSED;
+            spin_unlock(&s->sc_lock);
+
+            dp = delegstateid(s);
+            list_del_init(&dp->dl_recall_lru); // [8]
+            spin_unlock(&cl->cl_lock);
+            nfs4_put_stid(s); // [9]
+            ret = nfs_ok;
+            goto out;
+        }
+        ret = nfserr_locks_held;
+        break;
+    // [...]
+    }
+out:
+    return ret;
+}
+```
+
+正常情況下 laundromat 的執行流程會像是：
+
+<img src="/assets/image-20250202210523427.png" alt="image-20250202210523427" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
+如果與 `nfsd4_free_stateid()` 有 race condition 的問題，則執行流程會變得像：
+
+<img src="/assets/image-20250202210646396.png" alt="image-20250202210646396" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
+此時，file lease 仍 reference 到 delegation object，因此後續 NFSD 遍歷 lease list 時，就會呼叫 `nfsd_breaker_owns_lease()` 並存取到已經釋放的 delegation object [10]。
+
+``` c
+static bool nfsd_breaker_owns_lease(struct file_lease *fl)
+{
+    struct nfs4_delegation *dl = fl->c.flc_owner;
+    struct svc_rqst *rqst;
+    struct nfs4_client *clp;
+
+    rqst = nfsd_current_rqst();
+    if (!nfsd_v4client(rqst))
+        return false;
+    clp = *(rqst->rq_lease_breaker);
+    return dl->dl_stid.sc_client == clp; // [10]
+}
+```
+
+### smb: client: fix double free of TCP_Server_Info::hostname
+> [Commit](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=fa2f9906a7b333ba757a7dbae0713d8a5396186e)
+
+CIFS 為 Linux kernel smb 的 client 端實作。當 mount 一個 smb server 時，function `cifs_get_tcp_session()` 會被呼叫來建立 TCP session object，紀錄 remote server 的連線狀態。此外，在初始化的過程中，該 function 還會建立一個 kernel thread "cifsd" 來處理此 session 連線 [1]。
+
+``` c
+int cifs_mount(struct cifs_sb_info *cifs_sb, struct smb3_fs_context *ctx)
+{
+    int rc = 0;
+    struct cifs_mount_ctx mnt_ctx = { .cifs_sb = cifs_sb, .fs_ctx = ctx, };
+
+    rc = cifs_mount_get_session(&mnt_ctx); // <---------------
+    // [...]
+}
+
+int cifs_mount_get_session(struct cifs_mount_ctx *mnt_ctx)
+{
+    // [...]
+    server = cifs_get_tcp_session(ctx, NULL); // <---------------
+    // [...]
+}
+
+struct TCP_Server_Info *
+cifs_get_tcp_session(struct smb3_fs_context *ctx,
+             struct TCP_Server_Info *primary_server)
+{
+    struct TCP_Server_Info *tcp_ses = NULL;
+
+    // [...]
+    tcp_ses = kzalloc(sizeof(struct TCP_Server_Info), GFP_KERNEL);
+    tcp_ses->hostname = kstrdup(ctx->server_hostname, GFP_KERNEL);
+
+    if (ctx->leaf_fullpath) {
+        tcp_ses->leaf_fullpath = kstrdup(ctx->leaf_fullpath, GFP_KERNEL);
+        // [...]
+    }
+
+    // [...]
+    tcp_ses->tsk = kthread_run(cifs_demultiplex_thread, // [1]
+                  tcp_ses, "cifsd");
+    
+    // [...]
+    return tcp_ses;
+}
+```
+
+`cifs_demultiplex_thread()` 會非同步地建立連線，然而當底層 function `cifs_handle_standard()` 發現 session 已經過期 [2]，就會呼叫 `cifs_reconnect()` 重新連線。
+
+``` c
+static int
+cifs_demultiplex_thread(void *p)
+{
+    struct TCP_Server_Info *server = p;
+    
+    // [...]
+    while (server->tcpStatus != CifsExiting) {
+        // [...]
+         else {
+            mids[0] = server->ops->find_mid(server, buf);
+            bufs[0] = buf;
+            num_mids = 1;
+
+            if (!mids[0] || !mids[0]->receive)
+                length = standard_receive3(server, mids[0]); // <---------------
+            // [...]
+        }
+        // [...]
+    }
+}
+
+static int
+standard_receive3(struct TCP_Server_Info *server, struct mid_q_entry *mid)
+{
+    // [...]
+    return cifs_handle_standard(server, mid); // <---------------
+}
+
+int
+cifs_handle_standard(struct TCP_Server_Info *server, struct mid_q_entry *mid)
+{
+    char *buf = server->large_buf ? server->bigbuf : server->smallbuf;
+    // [...]
+    if (server->ops->is_session_expired &&
+        server->ops->is_session_expired(buf)) { // [2]
+        cifs_reconnect(server, true);
+        return -1;
+    }
+    // [...]
+}
+```
+
+在 DFS (Distributed File System) feature 支援的情況下，`cifs_reconnect()` 底層會呼叫 `reconnect_target_unlocked()`，遍歷所有可能的 target file system name [3]，呼叫 `__reconnect_target_unlocked()` 向這些 target 建立連線 [4]。
+
+``` c
+int cifs_reconnect(struct TCP_Server_Info *server, bool mark_smb_session)
+{
+    // [...]
+    return reconnect_dfs_server(server); // <---------------
+}
+
+static int reconnect_dfs_server(struct TCP_Server_Info *server)
+{
+    // [...]
+    do {
+        // [...]
+        cifs_server_lock(server);
+        rc = reconnect_target_unlocked(server, &tl, &target_hint);
+        // [...]
+    } while (server->tcpStatus == CifsNeedReconnect);
+}
+
+static int reconnect_target_unlocked(struct TCP_Server_Info *server, struct dfs_cache_tgt_list *tl,
+                     struct dfs_cache_tgt_iterator **target_hint)
+{
+    int rc;
+    struct dfs_cache_tgt_iterator *tit;
+
+    // [...]
+    tit = dfs_cache_get_tgt_iterator(tl);
+
+    // [...]
+    for (; tit; tit = dfs_cache_get_next_tgt(tl, tit)) { // [3]
+        rc = __reconnect_target_unlocked(server, dfs_cache_get_tgt_name(tit)); // [4]
+        // [...]
+    }
+}
+```
+
+`__reconnect_target_unlocked()` 會釋放當前 server object 的成員 `hostname` [5] 且替換成新的 target hostname [6]。
+
+``` c
+static int __reconnect_target_unlocked(struct TCP_Server_Info *server, const char *target)
+{
+    // [...]
+    if (!cifs_swn_set_server_dstaddr(server)) {
+        if (server->hostname != target) {
+            hostname = extract_hostname(target);
+            if (!IS_ERR(hostname)) {
+                spin_lock(&server->srv_lock);
+                kfree(server->hostname); // [5]
+                server->hostname = hostname; // [6]
+                spin_unlock(&server->srv_lock);
+            } 
+        }
+        // [...]
+    }
+}
+```
+
+在發生錯誤時會執行 `cifs_put_tcp_session()` 來釋放 hostname [7] 以及停止 cifsd [8]。
+
+``` c
+void
+cifs_put_tcp_session(struct TCP_Server_Info *server, int from_reconnect)
+{
+    // [...]
+    kfree(server->hostname); // [7]
+    server->hostname = NULL;
+    
+    // [...]
+    task = xchg(&server->tsk, NULL);
+    if (task)
+        send_sig(SIGKILL, task, 1); // [8]
+}
+```
+
+然而，該 function 會先釋放 server object 的 `hostname`，之後才發送 SIGKILL signal 給 cifsd thread。若此時 cifsd thread 正執行 `__reconnect_target_unlocked()` 到一半，則 `kfree(server->hostname)` 就有可能被釋放兩次，造成 **double free**。
+
+## 結語
+
+雖然大部分漏洞的成因都不難，但因為涵蓋了各式各樣的 subsystem，仍讓我在分析觸發漏洞的執行流程中學到不少新東西。希望今年 (2025) 可以繼續精進自己的能力，且持續分享 Linux kernel 相關的 1-day 分析與手法，祝各位新年快樂 🎊。
