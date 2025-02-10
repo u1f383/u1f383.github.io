@@ -51,10 +51,15 @@ wget https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/vmlinux.g
 wget https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/.config
 
 # Source code info
+## LTS
 curl https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_INFO
 wget https://github.com/gregkh/linux/archive/<COMMIT_HASH>.zip
-## or just one-line
 wget https://github.com/gregkh/linux/archive/$(curl -s https://storage.googleapis.com/kernelctf-build/releases/lts-X.X.X/COMMIT_INFO | sed -n 's/COMMIT_HASH=//p').zip
+
+## COS
+curl https://storage.googleapis.com/kernelctf-build/releases/cos-X.X.X/COMMIT_INFO
+wget https://cos.googlesource.com/third_party/kernel/+archive/<COMMIT_HASH>.tar.gz
+wget https://cos.googlesource.com/third_party/kernel/+archive/$(curl -s https://storage.googleapis.com/kernelctf-build/releases/cos-X.X.X/COMMIT_INFO | sed -n 's/COMMIT_HASH=//p').tar.gz
 
 # Commit info
 https://github.com/torvalds/linux/commit/<COMMIT_HASH>
@@ -427,6 +432,7 @@ Extend race window
 | seq_operations   | 0x20          | GFP_KERNEL_ACCOUNT | shmat                                        | shmdt         |
 | shm_file_data    | 0x20          | GFP_KERNEL_ACCOUNT | open "/proc/self/stat"                       | close         |
 | msg_msg          | 0x30 ~ 0x1000 | GFP_KERNEL_ACCOUNT | msgsnd                                       | msgrcv        |
+| msg_msgseg       | 0x08 ~ 0x1000 | GFP_KERNEL_ACCOUNT | msgsnd (larger than 0x1000 - 0x30)           | msgrcv        |
 | user_key_payload | 0x18 ~ 0x7fff | GFP_KERNEL         | add_key                                      | keyctl_unlink |
 | pipe_buffer      | 0x280         | GFP_KERNEL_ACCOUNT | pipe                                         | close         |
 | timerfd_ctx      | 0xd8          | GFP_KERNEL         | timerfd_create                               | close         |
