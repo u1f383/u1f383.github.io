@@ -62,6 +62,14 @@ void task_work_run(void)
 }
 ```
 
+## RWSEM
+
+- Read Lock: `down_read()`
+    - Acquires the semaphore for reading.
+- Write Lock: `down_write()`
+    - Acquires the semaphore for writing.
+- Unlocking: `up_read()` and `up_write()` release the semaphore after the operation is complete.
+
 ## Socket
 
 ### Field
@@ -273,3 +281,8 @@ When releasing an object using the `kfree_rcu()` API, there is a mandatory five-
  */
 static void kfree_rcu_monitor(struct work_struct *work) {...}
 ```
+
+## Thread
+
+`CLONE_THREAD`
+- share cred object (`struct cred`) in `copy_creds()`

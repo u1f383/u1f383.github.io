@@ -126,9 +126,16 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 2. Update the list of available packages by running `sudo apt update`.
 
 3. Download the kernel source code.
+
 ``` bash
 sudo apt install dpkg-dev
 apt source linux-image-unsigned-$(uname -r)
+```
+
+or 
+
+```
+http://tw.archive.ubuntu.com/ubuntu/pool/main/l/linux/<linux_6.8.0.orig.tar.gz>
 ```
 
 #### Debug Image
