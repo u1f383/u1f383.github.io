@@ -215,6 +215,8 @@ static struct sk_buff *netem_dequeue(struct Qdisc *sch)
 }
 ```
 
+The exploitation method is the same as CVE-2024-56770.
+
 ## 3. CVE-2025-21700 - net: sched: Disallow replacing of child qdisc from one parent to another
 
 The commit is [here](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=bc50835e83f60f56e9bec2b392fb5544f250fb6f), and the POC is [here](/assets/cve-2025-21700-poc.c).
@@ -283,3 +285,5 @@ The patch disallows moving a qdisc to a different parent subtree.
 +                    return -EINVAL;
 +                }
 ```
+
+The exploitation method is the same as CVE-2024-56770.
