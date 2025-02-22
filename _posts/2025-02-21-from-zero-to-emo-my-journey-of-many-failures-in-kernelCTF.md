@@ -4,7 +4,7 @@ title:  "From Zero to Emo – My Journey of Many Failures in kernelCTF"
 categories: linux
 ---
 
-Since the end of 2024, many vulnerabilities exploited in kernelCTF have originated from the net/sched subsystem, often following similar patterns. In short, the － field of a qdisc object represents the number of packets in its child qdisc. Because this field also determines the qdisc's state, logical bugs that violate the `qlen` rule can allow us to manipulate the qdisc state, leading to scenarios where a class object is freed but remains accessible.
+Since the end of 2024, many vulnerabilities exploited in kernelCTF have originated from the net/sched subsystem, often following similar patterns. In short, the `qlen` field of a qdisc object represents the number of packets in its child qdisc. Because this field also determines the qdisc's state, logical bugs that violate the `qlen` rule can allow us to manipulate the qdisc state, leading to scenarios where a class object is freed but remains accessible.
 
 While reproducing CVE-2024-56770 as part of a 1-day practice, I accidentally discovered two additional, previously unknown vulnerabilities. Unfortunately, both were exploited by others. One of the reasons I lost the race condition competition was that my exploitation relied on a side-channel attack to leak KASLR, which was unstable on a busy machine. I have no idea how to leak KASLR in this scenario and am still waiting for the reporter to share their techniques.
 
