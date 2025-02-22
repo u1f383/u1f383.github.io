@@ -159,7 +159,7 @@ static int drr_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 }
 ```
 
-We first bind a netem qdisc to a DRR class object and then trigger the vulnerability. The `netem_dequeue()` function drops `qlen` without calling `qdisc_tree_reduce_backlog()`, preventing the DRR qlen notification handler from being invoked to remove the class object from the active list. As a result, when deleting a DRR class object, the delete handler sees that `qlen` and data size are both zero and takes no action.
+We first bind a netem qdisc to a DRR class object and then trigger the vulnerability. The `netem_dequeue()` function **drops `qlen` without calling `qdisc_tree_reduce_backlog()`**, preventing the DRR qlen notification handler from being invoked to remove the class object from the active list. As a result, when deleting a DRR class object, the delete handler sees that `qlen` and data size are both zero and takes no action.
 
 However, the class object remains in the active list, which can lead to a UAF if the kernel retrieves the class object from the active list — this occurs in the DRR dequeue handler, `drr_dequeue()`.
 
