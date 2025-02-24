@@ -151,9 +151,9 @@ A **scatterlist** is a data structure used to describe a **list of memory segmen
 
 ``` c
 struct scatterlist {
-	unsigned long	page_link;
-	unsigned int	offset;
-	unsigned int	length;
+    unsigned long page_link;
+    unsigned int offset;
+    unsigned int length;
     // [...]
 };
 ```
