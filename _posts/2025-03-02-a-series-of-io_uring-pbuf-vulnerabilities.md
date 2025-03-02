@@ -4,7 +4,7 @@ title:  "A Series of io_uring pbuf Vulnerabilities"
 categories: linux
 ---
 
-In this post, we will analyze several vulnerabilities related to io_uring pubf, all of which have been proven to be exploitable in kernelCTF or Pwn2Own.
+In this post, we will analyze several vulnerabilities related to io_uring pbuf, all of which have been proven to be exploitable in kernelCTF or Pwn2Own.
 
 ## 1. CVE-2024-0582 - io_uring/kbuf: defer release of mapped buffer rings
 
