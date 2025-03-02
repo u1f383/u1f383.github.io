@@ -494,7 +494,7 @@ The kernel must ensure that the selected buffer of a request is no longer access
 +    return ret;
 ```
 
-## 3. CVE-2025-XXXXX - io_uring/rw: split io_read() into a helper
+## 3. CVE-2023-52926 - io_uring/rw: split io_read() into a helper
 
 The commit is [here](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/io_uring?h=linux-6.6.y&id=6c27fc6a783c8a77c756dd5461b15e465020d075).
 
