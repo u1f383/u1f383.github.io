@@ -547,7 +547,7 @@ After that, I scan the entire heap to leak kernel text and overwrite kernel data
 
 This bug was found by Billy (@st424204), and I asked him for some details. Many thanks to him!
 
-## 4. CVE-2025-XXXXX - io_uring/kbuf: reallocate buf lists on upgrade
+## 4. CVE-2025-21836 - io_uring/kbuf: reallocate buf lists on upgrade
 
 The commit is [here](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=8802766324e1f5d414a81ac43365c20142e85603), and it was also reported by me 😄.
 

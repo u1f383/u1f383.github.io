@@ -552,3 +552,10 @@ slab info kmalloc-96
 # show page tables
 pt
 ```
+
+### pahole
+
+``` bash
+pahole -s ./vmlinux | grep -P "\t<size>\t"
+pahole -C <struct_name> ./vmlinux
+```
