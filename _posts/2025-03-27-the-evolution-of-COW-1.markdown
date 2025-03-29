@@ -4,6 +4,9 @@ title:  "The Evolution of Dirty COW (1)"
 categories: linux
 ---
 
+- Part1: [The Evolution of Dirty COW (1)]({% post_url 2025-03-27-the-evolution-of-COW-1 %})
+- Part2: [The Evolution of Dirty COW (2)]({% post_url 2025-03-29-the-evolution-of-COW-2 %})
+
 The Linux kernel has memory management (mm) related bugs over the years. One of the most well-known is the **Dirty COW**. Since then, researchers have found similar bugs rooted in the same issue, popping up in areas like **huge pages** and **shared memory**.
 
 Even though the mm subsystem has gone through a lot of changes and improvements over time, revisiting these classic bugs is still very useful. 
@@ -588,8 +591,10 @@ __get_user_pages
     -> context switch
 
   [...]
+
                                                      SYS_madvise(MADV_DONTNEED)
-                                                       -> zeroes out PTEs
+                                                       -> zeroes out the COW PTE
+
   [...]
 
   follow_page_mask
