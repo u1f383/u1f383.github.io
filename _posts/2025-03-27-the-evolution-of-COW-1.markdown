@@ -563,7 +563,7 @@ static void unmap_single_vma(struct mmu_gather *tlb,
 }
 ```
 
-Because the `SYS_madvise(MADV_DONTNEED)` only acquires a read lock on `mm`, it is possible to zero out those COW pages concurrently.
+Because the `sys_madvise(MADV_DONTNEED)` only acquires a read lock on `mm`, it is possible to zero out those COW pages concurrently.
 
 ### 3.2. Race Condition
 
@@ -592,7 +592,7 @@ __get_user_pages
 
   [...]
 
-                                                     SYS_madvise(MADV_DONTNEED)
+                                                     sys_madvise(MADV_DONTNEED)
                                                        -> zeroes out the COW PTE
 
   [...]

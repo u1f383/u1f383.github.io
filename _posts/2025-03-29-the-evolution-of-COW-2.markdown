@@ -155,7 +155,7 @@ static int khugepaged(void *none)
 }
 ```
 
-In setups where `CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y`, the process has to explicitly call `SYS_madvise(MADV_HUGEPAGE)` to request THPs. If the memory range passes some flag checks [6], it eventually triggers `khugepaged_enter()` [7].
+In setups where `CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y`, the process has to explicitly call `sys_madvise(MADV_HUGEPAGE)` to request THPs. If the memory range passes some flag checks [6], it eventually triggers `khugepaged_enter()` [7].
 
 ``` c
 static long madvise_behavior(struct vm_area_struct *vma,
@@ -449,7 +449,7 @@ __get_user_pages
 
   [...]
 
-                                                     SYS_madvise(MADV_DONTNEED)
+                                                     sys_madvise(MADV_DONTNEED)
                                                        -> zeroes out the COW PTE
                                                      read access THP
                                                        -> load the PTE of the read-only huge zero page
@@ -579,7 +579,7 @@ This vulnerability was introduced in this [commit](https://web.git.kernel.org/pu
 -        _dst_pte = pte_mkdirty(_dst_pte);
 ```
 
-Let's take a quick detour to talk about userfaultfd. It's a mechanism that **allows user space to handle its own page faults**. You start by calling `SYS_userfaultfd()` [1] to get a file descriptor, then use `SYS_ioctl()` to interact with the userfaultfd subsystem.
+Let's take a quick detour to talk about userfaultfd. It's a mechanism that **allows user space to handle its own page faults**. You start by calling `sys_userfaultfd()` [1] to get a file descriptor, then use `sys_ioctl()` to interact with the userfaultfd subsystem.
 
 According to the [man page](https://man7.org/linux/man-pages/man2/userfaultfd.2.html), when userfaultfd is set to `UFFDIO_REGISTER_MODE_MINOR` [2] mode, the kernel will notify the user space handler only when a **minor page fault** occurs.
 
@@ -601,7 +601,7 @@ So what's a minor page fault? When you first access a memory-mapped file, the sy
 
 But if the data's still on disk (or has been swapped out), the kernel has to load it into RAM, and that's a major fault.
 
-To avoid major faults, filesystems like EXT4 try to keep frequently used data in the page cache. When a process requests the data, the kernel can serve it straight from memory. To flush modified data back to disk, you can use `SYS_sync()` or similar calls.
+To avoid major faults, filesystems like EXT4 try to keep frequently used data in the page cache. When a process requests the data, the kernel can serve it straight from memory. To flush modified data back to disk, you can use `sys_sync()` or similar calls.
 
 The hierarchy of file access in Linux is as follows:
 
@@ -810,7 +810,7 @@ __get_user_pages
 
   [...]
 
-                            SYS_madvise(MADV_DONTNEED)
+                            sys_madvise(MADV_DONTNEED)
                               -> zeroes out the COW PTE
                             read shmem
                               shmem_fault
@@ -818,7 +818,7 @@ __get_user_pages
 
                                                  =====>
 
-                                                        SYS_ioctl(UFFDIO_CONTINUE)
+                                                        sys_ioctl(UFFDIO_CONTINUE)
                                                           userfaultfd_continue
                                                             mcontinue_atomic_pte
                                                               shmem_getpage
