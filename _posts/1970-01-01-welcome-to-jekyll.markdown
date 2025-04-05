@@ -86,7 +86,6 @@ clean:
 ```
 
 ### Ubuntu specified version
-
 ``` bash
 # Ubuntu offical page
 https://blueprints.launchpad.net/ubuntu/jammy/amd64/linux-image-5.15.0-69-generic/5.15.0-69.76
