@@ -166,6 +166,79 @@ dpkg-query -L linux-image-unsigned-$(uname -r)-dbgsym
 /usr/lib/debug/lib/modules/6.8.0-49-generic/kernel
 ```
 
+### RHEL (RedHat Enterprise for Linux)
+
+#### Source Code
+
+You may not be able to access the source code of RHEL directly. However, Rocky Linux is fully compatible with RHEL and is an open-source project. Therefore, you can theoretically view the source code through Rocky Linux instead.
+
+The following link is one of the mirrors for Rocky Linux:
+https://mirrors.up.pt/rocky/9/BaseOS/source/tree/Packages/k/
+
+``` bash
+rpm2cpio kernel-5.14.0-503.40.1.el9_5.src.rpm > tmp.cpio
+cpio -i -d < tmp.cpio
+ls -al linux-5.14.0-503.40.1.el9_5.tar.xz
+```
+
+#### Installation
+
+RedHat provides a no-cost subscription for developers, so you don't need to purchase or subscribe to a license. For more details, please refer to the link below:
+https://developers.redhat.com/articles/faqs-no-cost-red-hat-enterprise-linux
+
+#### Others
+
+Update the kernel to the latest:
+``` bash
+sudo dnf install kernel
+```
+
+The kernel module path (RHEL 9.5):
+- `/lib/modules/5.14.0-503.XXX.1.el9_5.x86_64`
+
+### ftrace
+
+``` bash
+cat /proc/kallsyms | grep function_name # make sure the function is not inlined
+
+echo \<function_name\> > /sys/kernel/debug/tracing/set_ftrace_filter
+echo function > /sys/kernel/debug/tracing/current_tracer
+echo 1 > /sys/kernel/debug/tracing/options/func_stack_trace
+echo 1 > /sys/kernel/debug/tracing/tracing_on
+
+# ... trigger function
+cat /sys/kernel/debug/tracing/trace
+
+# clear output
+echo > /sys/kernel/debug/tracing/trace
+
+# turn off
+echo 0 > /sys/kernel/debug/tracing/tracing_on
+```
+
+### kprobe
+
+``` bash
+# Set a return probe (r = return probe) on the function and print its return value
+echo 'r:myprobe <function_name> $retval' > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+echo 0 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+
+# Set a return probe and print the 64-bit value at an offset of 80 bytes from the return value (used as a pointer)
+echo 'r:myprobe <function_name> data_ptr=+80($retval):u64' > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+echo 0 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+
+# Set an entry probe (p = probe) on the function and print the third argument
+echo 'p:myprobe <function_name> $arg3' > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+echo 0 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+
+# Display the trace output and then clear the trace buffer
+cat /sys/kernel/debug/tracing/trace
+echo > /sys/kernel/debug/tracing/trace
+```
+
 ### Common Objects Refcount Fields
 ``` c
 // struct file
