@@ -18,3 +18,4 @@ I also participate in some study groups and will occasionally share some slides 
 - [(Chrome v8) V8 Promise - 透過三個 CVE 來了解 V8 Promise 底層實作](/slides/study_groups/Deephacking-20240218.pdf) (Written on February 18, 2024)
 - [(Linux kernel) Linux Kernel Network Security (1)](/slides/study_groups/Deephacking-20240629.pdf) (Written on June 29, 2024)
 - [(Linux kernel) Linux Kernel Network Security - Transport Layer Security (TLS)](/slides/study_groups/Deephacking-20250119.pdf) (Written on January 19, 2025)
+- [(Ubuntu) D-Bus & Polkit on Ubuntu](/slides/study_groups/Deephacking-20250525.pdf) (Written on May 25, 2025)

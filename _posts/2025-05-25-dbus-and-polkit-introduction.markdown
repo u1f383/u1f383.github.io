@@ -14,6 +14,8 @@ The research was done on Ubuntu 24.04, with the following output from the `uname
 Linux DBUS-VM 6.11.0-26-generic #26~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Apr 17 19:20:47 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
 ```
 
+P.S. I've also made a [slide](/slides/study_groups/Deephacking-20250525.pdf) for my study group, and it may be useful for further reference!
+
 ## 1. D-Bus (Desktop Bus)
 
 Desktop Bus, also known as **"D-Bus,"** is a hybrid IPC (Inter-process Communication) and RPC (Remote Procedure Call) mechanism used in Unix-based Distributions such as Ubuntu and Red Hat Linux. This mechanism is implemented by creating dbus daemons, and these daemons create unix sockets to receive requests. Processes can register their services on the bus with a unique bus name, and other processes can send requests to the services by specifying a bus name.
