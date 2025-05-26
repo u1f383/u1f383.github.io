@@ -1746,6 +1746,7 @@ When `polkitd` receives a `CheckAuthorization` request, it calls `check_authoriz
 Initially, it tries to get the level directly from the **action policies** [1, 2, 3], depending on session state. Then it delegates to `polkit_backend_interactive_authority_check_authorization_sync()` to allow further evaluation via **rules** [4].
 
 ``` c
+// src/polkitbackend/polkitbackendinteractiveauthority.c
 static PolkitAuthorizationResult *
 check_authorization_sync (PolkitBackendAuthority         *authority,
                           PolkitSubject                  *caller,
@@ -1859,6 +1860,7 @@ During the authentication process, polkitd attempts to retrieve the UID of the p
 Let's take a look at the source code to understand how `polkitd` implements this behavior. In the fixed version of `polkitd` — as seen in [commit a04d13a](https://gitlab.freedesktop.org/polkit/polkit/-/commit/a04d13affe0fa53ff618e07aa8f57f4c0e3b9b81) — if the subject is specified in the form of a bus name, the function `polkit_backend_session_monitor_get_user_for_subject()` calls `polkit_system_bus_name_get_user_sync()` [1] to retrieve the corresponding user credentials.
 
 ``` c
+// src/polkitbackend/polkitbackendsessionmonitor-systemd.c
 polkit_backend_session_monitor_get_user_for_subject (PolkitBackendSessionMonitor  *monitor,
                                                      PolkitSubject                *subject,
                                                      gboolean                     *result_matches,
@@ -1877,6 +1879,7 @@ polkit_backend_session_monitor_get_user_for_subject (PolkitBackendSessionMonitor
 The function `polkit_system_bus_name_get_user_sync()` obtains the UID from the bus name [2] and then constructs a `PolkitUnixUser` object from that UID [3].
 
 ``` c
+// src/polkit/polkitsystembusname.c
 PolkitUnixUser *
 polkit_system_bus_name_get_user_sync (PolkitSystemBusName  *system_bus_name,
 				      GCancellable         *cancellable,
@@ -1900,6 +1903,7 @@ polkit_system_bus_name_get_user_sync (PolkitSystemBusName  *system_bus_name,
 The helper function `polkit_system_bus_name_get_creds_sync()` sends two dbus method calls to the `dbus-daemon`: `GetConnectionUnixUser` [4] to get the UID, and `GetConnectionUnixProcessID` [5] to get the PID associated with the given bus name. If any error occurs during these calls [6], the function returns early with an error.
 
 ``` c
+// src/polkit/polkitsystembusname.c
 static gboolean
 polkit_system_bus_name_get_creds_sync (PolkitSystemBusName           *system_bus_name,
 				       guint32                       *out_uid,
@@ -2106,6 +2110,7 @@ USER=dbus-test
 To determine whether a session is active, `polkitd` attempts to retrieve the **`"STATE"`** key [1] from the session metadata. If the value of this key is the string **`"active"`** [2], the session is considered active.
 
 ``` c
+// src/polkitbackend/polkitbackendsessionmonitor-systemd.c
 gboolean
 polkit_backend_session_monitor_is_session_active (PolkitBackendSessionMonitor *monitor,
                                                   PolkitSubject               *session)
