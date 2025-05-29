@@ -61,6 +61,8 @@ CONFIG_MALI_EXPERT=y
 CONFIG_MALI_VECTOR_DUMP=y
 CONFIG_MALI_PRFCNT_SET_PRIMARY=y
 CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD=y
+
+CONFIG_SYNC_FILE=y
 ```
 
 Make sure `CONFIG_OF` is disabled, or `/dev/mali0` won't show up.
@@ -69,6 +71,7 @@ Make sure `CONFIG_OF` is disabled, or `/dev/mali0` won't show up.
 CONFIG_OF=n
 ```
 
+Run `make olddefconfig` to populate the configuration update.
 
 ### Source Code
 
@@ -80,7 +83,7 @@ cp -r src/driver/product/kernel/drivers/gpu/arm linux_src/drivers/gpu/
 
 ## [2] Header files
 cp -r src/driver/product/kernel/include/linux/* linux_src/include/linux/
-cp -r src/driver/product/kernel/include/linux/uapi/* linux_src/include/uapi/
+cp -r src/driver/product/kernel/include/uapi/* linux_src/include/uapi/
 ```
 
 Create a few files and directories that are referenced but missing:
@@ -90,8 +93,8 @@ Create a few files and directories that are referenced but missing:
 touch linux_src/arch/x86/include/asm/arch_timer.h
 
 # [2] Avoid the complaints during cleanup
-mkdir driver/gpu/arm/arbitration/
-touch driver/gpu/arm/arbitration/Makefile
+mkdir drivers/gpu/arm/arbitration/
+touch drivers/gpu/arm/arbitration/Makefile
 ```
 
 Some Mali code expects ARM-specific hardware, so we'll patch those parts to avoid build issues on x86.
@@ -131,7 +134,7 @@ void power_control_term(struct kbase_device *kbdev)
 ```
 
 
-You may need to comment out these function definitions:
+You may need to comment out these function definitions in some situations:
 - `kbasep_devfreq_read_suspend_clock()` (in `drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c`)
 - `pcm_prioritized_process_cb()` (in `drivers/gpu/arm/midgard/device/mali_kbase_device.c`)
 
@@ -183,6 +186,33 @@ Target Architecture (x86_64)
 
 # Filesystem images
 ext2/3/4 root filesystem (ext4)
+```
+
+Modify the rootfs of kernelCTF image:
+``` bash
+$ touch ~/rootfs/chroot/dev/mali0
+```
+
+Patch for `rootfs/home/user/nsjail.cfg`:
+``` diff
+   {
+     src: "/dev/random"
+     dst: "/dev/random"
+     is_bind: true
+     rw: true
+   },
++  {
++    src: "/dev/mali0"
++    dst: "/dev/mali0"
++    is_bind: true
++    rw: true
++  },
+   {
+     src: "/dev/full"
+     dst: "/dev/full"
+     is_bind: true
+     rw: true
+   },
 ```
 
 ## Reference

@@ -85,6 +85,21 @@ clean:
     make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- -C /<path_to_src> M=$(PWD) clean
 ```
 
+### Modify Image
+``` bash
+# 1. DOS/MBR boot sector image (e.g., kernelCTF image)
+sudo mount -o loop,offset=1048576 <image_file> rootfs
+sudo umount rootfs
+
+# 2. Mount image via dbus on some Linux distributions
+## attach image to loop device and mount in /media/<username>/...
+udisksctl loop-setup -f <image_file>
+## show all loop device
+losetup -a 
+## unmount
+udisksctl unmount -b /dev/loopN
+```
+
 ### Ubuntu specified version
 ``` bash
 # Ubuntu offical page
