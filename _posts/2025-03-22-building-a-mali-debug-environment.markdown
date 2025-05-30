@@ -133,10 +133,40 @@ void power_control_term(struct kbase_device *kbdev)
 	// [...]
 ```
 
+#### In some situations
 
-You may need to comment out these function definitions in some situations:
+Comment out these function definitions:
 - `kbasep_devfreq_read_suspend_clock()` (in `drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c`)
 - `pcm_prioritized_process_cb()` (in `drivers/gpu/arm/midgard/device/mali_kbase_device.c`)
+
+Apply patch for `include/linux/version_compat_defs.h`:
+
+``` diff                                                                
+-static inline int of_property_check_flag(const struct property *p, unsigned long flag)       
+-{                                                                                            
+-       return -EINVAL;                                                                       
+-}                                                                                            
+-                                                                                             
+-static inline void of_property_set_flag(struct property *p, unsigned long flag)              
+-{                                                                                            
+-}                                                                                            
+-                                                                                             
+-static inline void of_property_clear_flag(struct property *p, unsigned long flag)            
+-{                                                                                            
+-}                                                                                            
++//static inline int of_property_check_flag(const struct property *p, unsigned long flag)     
++//{                                                                                          
++//     return -EINVAL;                                                                       
++//}                                                                                          
++//                                                                                           
++//static inline void of_property_set_flag(struct property *p, unsigned long flag)            
++//{                                                                                          
++//}                                                                                          
++//                                                                                           
++//static inline void of_property_clear_flag(struct property *p, unsigned long flag)          
++//{                                                                                          
++//}                                                                                                                                                       
+```
 
 ## Step4. Compile
 
@@ -173,7 +203,7 @@ I reuse my kernelCTF ramdisk, but it's ok to build your own filesystem using [Bu
 ``` bash
 wget https://buildroot.org/downloads/buildroot-2024.02.11.tar.gz
 # ...
-make meunconfig
+make menuconfig
 # ...
 make -j`nproc`
 ```
