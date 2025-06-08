@@ -132,7 +132,7 @@ static int __io_remove_buffers(struct io_ring_ctx *ctx,
 
 The problem is clear: the mmap handler does not increment the refcount for pages or the buffer list. As a resultm the mapped memory region may point to freed pages after the buffer list is unregistered, leading to **page UAF**.
 
-### 2.2. Patch
+### 1.2. Patch
 
 To address the issue, the developers introduced a linked list field in the io_uring context object (`ctx->io_buf_list`), where a new ring buffer is added during initialization [1].
 
@@ -222,7 +222,7 @@ void io_kbuf_mmap_list_free(struct io_ring_ctx *ctx)
 }
 ```
 
-### 2.3. Others
+### 1.3. Others
 
 At first glance, I thought that simply closing the io_uring context would free the pages again. But later, I noticed that the `SYS_mmap` handler holds the file's refcount until the file mapping is unmapped [1].
 
