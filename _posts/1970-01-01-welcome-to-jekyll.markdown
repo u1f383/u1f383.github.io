@@ -211,6 +211,45 @@ sudo dnf install kernel
 The kernel module path (RHEL 9.5):
 - `/lib/modules/5.14.0-503.XXX.1.el9_5.x86_64`
 
+### Extend Hard Disk on Ubuntu
+
+1. Display disk partitions
+
+```
+NAME                      MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS
+...
+sda                         8:0    0   256G  0 disk
+├─sda1                      8:1    0     1G  0 part /boot/efi
+├─sda2                      8:2    0     2G  0 part /boot
+└─sda3                      8:3    0  60.9G  0 part
+  └─ubuntu--vg-ubuntu--lv 253:0    0  60.9G  0 lvm  /
+...
+```
+
+2. Expand partition 3 to allocate the unused disk space
+
+```bash
+sudo growpart /dev/sda 3
+```
+
+3. Notify LVM (Logical Volume Manager) of the updated partition size
+
+``` bash
+sudo pvresize /dev/sda3
+```
+
+4. Extend the logical volume
+
+``` bash
+sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+```
+
+5. Resize the filesystem
+
+``` bash
+sudo resize2fs /dev/ubuntu-vg/ubuntu-lv
+```
+
 ### ftrace
 
 ``` bash
@@ -646,3 +685,36 @@ pt
 pahole -s ./vmlinux | grep -P "\t<size>\t"
 pahole -C <struct_name> ./vmlinux
 ```
+
+## Android Debug Environment
+
+### Host
+
+Install adb on MacOS
+``` bash
+brew install android-platform-tools
+```
+
+Some helpful commands:
+``` bash
+# list device
+adb devices
+
+# push binary
+adb push my_binary /data/local/tmp/
+
+# get shell
+adb shell
+
+# get log
+adb -s <device_id> logcat -b all
+
+# get fingerprint (for bug report)
+adb shell getprop ro.build.fingerprint
+```
+
+### Phone
+
+Enable USB Debugging:
+- Traditional Chinese: https://developer.android.com/studio/debug/dev-options?hl=zh-tw
+- English: https://developer.android.com/studio/debug/dev-options

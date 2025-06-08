@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Building a Mali GPU Debug Environment"
-categories: linux
+categories: android
 ---
 
 Just a quick note on how I set up my Mali debug environment. Most of this post references [this issue](https://project-zero.issues.chromium.org/issues/42451673), submitted by Jann Horn.
@@ -31,7 +31,7 @@ make defconfig
 
 ### Configuration
 
-`linux_src/drivers/gpu/Makefile` - enable building the `arm/` directory by adding it to `obj-y`:
+`kernel_src/drivers/gpu/Makefile` - enable building the `arm/` directory by adding it to `obj-y`:
 ``` diff
  obj-y           += host1x/ drm/ vga/
 +obj-y           += arm/
@@ -39,7 +39,7 @@ make defconfig
  obj-$(CONFIG_TRACE_GPU_MEM)     += trace
 ```
 
-`linux_src/drivers/Kconfig` - include the Mali driver's `Kconfig` so we can configure it via menuconfig:
+`kernel_src/drivers/Kconfig` - include the Mali driver's `Kconfig` so we can configure it via menuconfig:
 ```diff
  source "drivers/android/Kconfig"
 
@@ -63,11 +63,8 @@ CONFIG_MALI_PRFCNT_SET_PRIMARY=y
 CONFIG_MALI_TRACE_POWER_GPU_WORK_PERIOD=y
 
 CONFIG_SYNC_FILE=y
-```
 
-Make sure `CONFIG_OF` is disabled, or `/dev/mali0` won't show up.
-
-```
+# make sure `CONFIG_OF` is disabled, or `/dev/mali0` won't show up.
 CONFIG_OF=n
 ```
 
@@ -79,33 +76,33 @@ Now, copy the relevant Mali source and headers into the kernel tree:
 
 ``` bash
 ## [1] Source files
-cp -r src/driver/product/kernel/drivers/gpu/arm linux_src/drivers/gpu/
+cp -r driver_src/driver/product/kernel/drivers/gpu/arm kernel_src/drivers/gpu/
 
 ## [2] Header files
-cp -r src/driver/product/kernel/include/linux/* linux_src/include/linux/
-cp -r src/driver/product/kernel/include/uapi/* linux_src/include/uapi/
+cp -r driver_src/driver/product/kernel/include/linux/* kernel_src/include/linux/
+cp -r driver_src/driver/product/kernel/include/uapi/* kernel_src/include/uapi/
 ```
 
 Create a few files and directories that are referenced but missing:
 
 ``` bash
 # [1] arm/aarch64-specific header (hack for x86 build)
-touch linux_src/arch/x86/include/asm/arch_timer.h
+touch kernel_src/arch/x86/include/asm/arch_timer.h
 
 # [2] Avoid the complaints during cleanup
-mkdir drivers/gpu/arm/arbitration/
-touch drivers/gpu/arm/arbitration/Makefile
+mkdir kernel_src/drivers/gpu/arm/arbitration/
+touch kernel_src/drivers/gpu/arm/arbitration/Makefile
 ```
 
 Some Mali code expects ARM-specific hardware, so we'll patch those parts to avoid build issues on x86.
 
-`drivers/gpu/arm/midgard/csf/mali_kbase_csf.c`
+`kernel_src/drivers/gpu/arm/midgard/csf/mali_kbase_csf.c`
 
 ``` diff
 + #define dmb(...) do {} while (0)
 ```
 
-`drivers/gpu/arm/midgard/backend/gpu/mali_kbase_time.c`
+`kernel_src/drivers/gpu/arm/midgard/backend/gpu/mali_kbase_time.c`
 
 ``` diff
 u64 kbase_arch_timer_get_cntfrq(struct kbase_device *kbdev)
@@ -117,7 +114,7 @@ u64 kbase_arch_timer_get_cntfrq(struct kbase_device *kbdev)
 }
 ```
 
-`drivers/gpu/arm/midgard/mali_kbase_core_linux.c`
+`kernel_src/drivers/gpu/arm/midgard/mali_kbase_core_linux.c`
 
 ``` diff
 void power_control_term(struct kbase_device *kbdev)
@@ -139,7 +136,7 @@ Comment out these function definitions:
 - `kbasep_devfreq_read_suspend_clock()` (in `drivers/gpu/arm/midgard/backend/gpu/mali_kbase_devfreq.c`)
 - `pcm_prioritized_process_cb()` (in `drivers/gpu/arm/midgard/device/mali_kbase_device.c`)
 
-Apply patch for `include/linux/version_compat_defs.h`:
+Apply patch for `kernel_src/include/linux/version_compat_defs.h`:
 
 ``` diff                                                                
 -static inline int of_property_check_flag(const struct property *p, unsigned long flag)       
@@ -166,6 +163,31 @@ Apply patch for `include/linux/version_compat_defs.h`:
 +//static inline void of_property_clear_flag(struct property *p, unsigned long flag)          
 +//{                                                                                          
 +//}                                                                                                                                                       
+```
+
+Copy all in one:
+
+``` bash
+#!/bin/bash
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <driver_src> <kernel_src>"
+    exit 1
+fi
+
+driver_src=$1
+kernel_src=$2
+
+echo "Copying files from $driver_src to $kernel_src..."
+
+cp -r "$driver_src/product/kernel/drivers/gpu/arm" "$kernel_src/drivers/gpu/"
+cp -r "$driver_src/product/kernel/include/linux/"* "$kernel_src/include/linux/"
+cp -r "$driver_src/product/kernel/include/uapi/"* "$kernel_src/include/uapi/"
+
+touch "$kernel_src/arch/x86/include/asm/arch_timer.h"
+
+mkdir -p "$kernel_src/drivers/gpu/arm/arbitration/"
+touch "$kernel_src/drivers/gpu/arm/arbitration/Makefile"
 ```
 
 ## Step4. Compile
