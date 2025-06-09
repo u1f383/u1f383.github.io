@@ -718,3 +718,6 @@ adb shell getprop ro.build.fingerprint
 Enable USB Debugging:
 - Traditional Chinese: https://developer.android.com/studio/debug/dev-options?hl=zh-tw
 - English: https://developer.android.com/studio/debug/dev-options
+
+Device Information:
+- deviceinfohw: https://www.deviceinfohw.ru/devices/uploads.php?platform=PLATFORM&cpu=CPU&brand=BRAND&filter_key=KEY&filter=&submit=
