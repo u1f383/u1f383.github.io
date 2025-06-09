@@ -8,7 +8,7 @@ I'm Pumpkin (@u1f383), is a security researcher at DEVCORE, focusing on Linux ke
 
 The following slides are from my talks. I hope you find them useful 🙂.
 - [[POC 2024] How I use a novel approach to exploit a limited OOB on Ubuntu at Pwn2Own Vancouver 2024](/slides/talks/2024_POC-How_I_use_a_novel_approach_to_exploit_a_limited_OOB_on_Ubuntu_at_Pwn2Own_Vancouver_2024.pdf) (English, uploaded on November 13, 2024)
-- [[DEVCORECONF 2025] 寫作 Sync，唸作 Shell ~#](/slides/talks/2025_DEVCORECONF_spelled_Sync_pronounced_Shell.pdf) (Traditional Chinese, uploaded on June 09, 2025)
+- [[DEVCORE CONF 2025] 寫作 Sync，唸作 Shell ~#](/slides/talks/2025_DEVCORE_CONF_spelled_Sync_pronounced_Shell.pdf) (Traditional Chinese, uploaded on June 09, 2025)
 
 
 I also participate in some study groups and will occasionally share some slides here that might be useful (most of them are written in Traditional Chinese, haha).
