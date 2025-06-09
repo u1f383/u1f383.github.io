@@ -130,7 +130,7 @@ static int __io_remove_buffers(struct io_ring_ctx *ctx,
 }
 ```
 
-The problem is clear: the mmap handler does not increment the refcount for pages or the buffer list. As a resultm the mapped memory region may point to freed pages after the buffer list is unregistered, leading to **page UAF**.
+The problem is clear: the mmap handler does not increment the refcount for pages or the buffer list. As a result, the mapped memory region may point to freed pages after the buffer list is unregistered, leading to **page UAF**.
 
 ### 1.2. Patch
 
