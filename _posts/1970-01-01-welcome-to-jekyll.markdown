@@ -709,8 +709,28 @@ adb shell
 # get log
 adb -s <device_id> logcat -b all
 
-# get fingerprint (for bug report)
+##### for bug report #####
+# kernel release
+uname -r
+
+# get fingerprint
 adb shell getprop ro.build.fingerprint
+
+# Android version
+adb shell getprop ro.build.version.release
+
+# security patch time
+adb shell getprop ro.build.version.security_patch
+```
+
+`scrcpy`: mirror screen to the host
+
+``` bash
+# install
+brew install scrcpy
+
+# run (with device connected)
+scrcpy
 ```
 
 ### Phone
