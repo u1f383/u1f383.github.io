@@ -173,4 +173,4 @@ These registers dumped by the kernel are valuable:
 ...
 ```
 
-As a result, if we can reliably trigger a call to `WARN()`, `WARN_ON()`, `WARN_ON_ONCE()` or `__warn()` from user space, we may be able to establish a stable kernel address leak primitive without relying on hardware side channels.
+As a result, if we can reliably **trigger a call to `WARN()`, `WARN_ON()`, `WARN_ON_ONCE()` or `__warn()`** from user space, we may be able to establish a stable kernel address leak primitive without relying on hardware side channels.
