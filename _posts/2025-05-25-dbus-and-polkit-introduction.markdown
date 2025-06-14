@@ -870,7 +870,7 @@ polkit_agent_listener_register_with_options (PolkitAgentListener      *listener,
   
   // [...]
   server->thread = g_thread_try_new ("polkit agent listener", // [6]
-					 server_thread_func, server, error);
+                     server_thread_func, server, error);
 
   // [...]
   if (!server_register (server, error)) // [7]
@@ -1882,15 +1882,15 @@ The function `polkit_system_bus_name_get_user_sync()` obtains the UID from the b
 // src/polkit/polkitsystembusname.c
 PolkitUnixUser *
 polkit_system_bus_name_get_user_sync (PolkitSystemBusName  *system_bus_name,
-				      GCancellable         *cancellable,
-				      GError              **error)
+                      GCancellable         *cancellable,
+                      GError              **error)
 {
   PolkitUnixUser *ret = NULL;
   guint32 uid;
   
   // [...]
   if (!polkit_system_bus_name_get_creds_sync (system_bus_name, &uid, NULL, // [2]
-					      cancellable, error))
+                          cancellable, error))
     goto out;
 
   ret = (PolkitUnixUser*)polkit_unix_user_new (uid); // [3]
@@ -1906,27 +1906,27 @@ The helper function `polkit_system_bus_name_get_creds_sync()` sends two dbus met
 // src/polkit/polkitsystembusname.c
 static gboolean
 polkit_system_bus_name_get_creds_sync (PolkitSystemBusName           *system_bus_name,
-				       guint32                       *out_uid,
-				       guint32                       *out_pid,
-				       GCancellable                  *cancellable,
-				       GError                       **error)
+                       guint32                       *out_uid,
+                       guint32                       *out_pid,
+                       GCancellable                  *cancellable,
+                       GError                       **error)
 {
   gboolean ret = FALSE;
   // [...]
   g_dbus_connection_call (connection, // [4]
-			  "org.freedesktop.DBus",       /* name */
-			  "/org/freedesktop/DBus",      /* object path */
-			  "org.freedesktop.DBus",       /* interface name */
-			  "GetConnectionUnixUser",      /* method */
-			  // [...]
-			  &data);
+              "org.freedesktop.DBus",       /* name */
+              "/org/freedesktop/DBus",      /* object path */
+              "org.freedesktop.DBus",       /* interface name */
+              "GetConnectionUnixUser",      /* method */
+              // [...]
+              &data);
   g_dbus_connection_call (connection, // [5]
-			  "org.freedesktop.DBus",       /* name */
-			  "/org/freedesktop/DBus",      /* object path */
-			  "org.freedesktop.DBus",       /* interface name */
-			  "GetConnectionUnixProcessID", /* method */
-			  // [...]
-			  &data);
+              "org.freedesktop.DBus",       /* name */
+              "/org/freedesktop/DBus",      /* object path */
+              "org.freedesktop.DBus",       /* interface name */
+              "GetConnectionUnixProcessID", /* method */
+              // [...]
+              &data);
 
   // [...]
   if (data.caught_error) // [6]

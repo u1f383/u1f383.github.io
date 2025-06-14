@@ -119,7 +119,7 @@ u64 kbase_arch_timer_get_cntfrq(struct kbase_device *kbdev)
 ``` diff
 void power_control_term(struct kbase_device *kbdev)
 {
-	// [...]
+    // [...]
     for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
         if (kbdev->clocks[i]) {
 +           //if (__clk_is_enabled(kbdev->clocks[i]))
@@ -127,7 +127,7 @@ void power_control_term(struct kbase_device *kbdev)
             clk_put(kbdev->clocks[i]);
             kbdev->clocks[i] = NULL;
         } else
-	// [...]
+    // [...]
 ```
 
 #### In some situations
