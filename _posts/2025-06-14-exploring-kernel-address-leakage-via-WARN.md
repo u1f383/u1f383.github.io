@@ -13,11 +13,11 @@ Unfortunately, I haven't yet found a stable execution path that reliably trigger
 The `WARN()` macro expands to a function call to `__warn_printk()` [1] followed by the `ud2` [2] instruction.
 
 ``` c
-#define WARN(condition, format...) ({               \
-    int __ret_warn_on = !!(condition);              \
-    if (unlikely(__ret_warn_on))                    \
-        __WARN_printf(TAINT_WARN, format);          \  // [1]
-    unlikely(__ret_warn_on);                        \
+#define WARN(condition, format...) ({                \
+    int __ret_warn_on = !!(condition);               \
+    if (unlikely(__ret_warn_on))                     \
+        __WARN_printf(TAINT_WARN, format); /*[1] */  \
+    unlikely(__ret_warn_on);                         \
 })
 
 #define __WARN_printf(taint, arg...) do {                     \
@@ -25,10 +25,10 @@ The `WARN()` macro expands to a function call to `__warn_printk()` [1] followed 
     __WARN_FLAGS(BUGFLAG_NO_CUT_HERE | BUGFLAG_TAINT(taint)); \
 } while (0)
 
-#define __WARN_FLAGS(flags)                            \
-do {                                                   \
-    __auto_type __flags = BUGFLAG_WARNING|(flags);     \
-    _BUG_FLAGS(ASM_UD2, __flags, ASM_REACHABLE);       \  // [2]
+#define __WARN_FLAGS(flags)                                    \
+do {                                                           \
+    __auto_type __flags = BUGFLAG_WARNING|(flags);             \
+    _BUG_FLAGS(ASM_UD2, __flags, ASM_REACHABLE);  /* [2] */    \
 } while (0)
 
 #define ASM_UD2  ".byte 0x0f, 0x0b"
