@@ -434,7 +434,7 @@ int aa_change_profile(const char *fqname, int flags)
 }
 ```
 
-In a nut shell, if the target file being written to is `/proc/self/attr/exec` and the data is `"exec <profile>"`, the new profile is applied only after the **process executes `SYS_execve` system call**.
+In a nutshell, if the target file being written to is `/proc/self/attr/exec` and the data is `"exec <profile>"`, the new profile is applied only after the **process executes `SYS_execve` system call**.
 
 Conversely, if writing to `/proc/self/attr/current` with `"changeprofile <profile>"`, the process’s profile is **updated immediately**.
 
@@ -567,7 +567,7 @@ int main()
 
 The bypass method works only when `/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined` is disabled (i.e., set to 0). Versions of Ubuntu later than 25.04 are not affected, as it is enabled by default.
 
-For Ubuntu 24.10 and earlier versions, please refer the [official post](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007#p-148026-restrict-unprivileged-unconfined-profile-changes) for instructions on how to prevent any unprivileged and unconfined process from executing `aa-exec` to change its profile.
+For Ubuntu 24.10 and earlier versions, please refer to the [official post](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007#p-148026-restrict-unprivileged-unconfined-profile-changes) for instructions on how to prevent any unprivileged and unconfined process from executing `aa-exec` to change its profile.
 
 ## 7. Disclosure Timeline
 
