@@ -592,3 +592,44 @@ Once free page usage reaches the `low` threshold, the kernel selects another zon
 If no memory is available, the OOM killer selects a process to kill and frees its memory.
 
 <img src="/assets/image-20250301214937241.png" alt="image-20250301214937241" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
+## 5. Others
+
+Assuming we are operating within a cgroup and have the ability to create subgroups, we can configure memory limits and the OOM killer as follows:
+
+``` bash
+# Mount the memory cgroup
+mount -t cgroup -o memory cgroup_memory /tmp
+
+# Create a subgroup
+mkdir /tmp/aaa
+
+# Set memory usage limit
+echo $((500 * 1024)) > /tmp/aaa/memory.limit_in_bytes
+
+# Add the current process to the cgroup
+echo $$ > /tmp/aaa/cgroup.procs
+
+# Enable the OOM killer (enabled by default)
+## echo 0 > /tmp/aaa/memory.oom_control
+
+# Trigger an OOM condition
+./poc
+
+# Disable the OOM killer — the process will hang when memory is insufficient
+echo 1 > /tmp/aaa/memory.oom_control
+```
+
+When memory allocation fails, the kernel returns a NULL pointer instead of killing the process:
+
+```
+kmalloc(32, GFP_KERNEL_ACCOUNT)
+[...]
+=> slab_alloc_node()                     <------ return NULL
+  => slab_pre_alloc_hook()               <------ return false
+    => memcg_slab_pre_alloc_hook()
+      => obj_cgroup_charge()
+        => try_charge_memcg()
+          => mem_cgroup_out_of_memory()
+            => out_of_memory()           <------ trigger OOM
+```

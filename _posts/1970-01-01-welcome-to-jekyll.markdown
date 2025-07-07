@@ -579,6 +579,34 @@ Extend race window
 | xdp_umem         | 0x70          |                    |                                              |               |
 | netlink_sock     | 0x468         |                    |                                              |               |
 
+Page spraying
+> Based on paper "Take a Step Further: Understanding Page Spray in Linux Kernel Exploitation"
+
+| Function                     | Syscall        |
+| ---------------------------- | -------------- |
+| `packet_set_ring`            | `setsockopt`   |
+| `packet_snd`                 | `sendmsg`      |
+| `packet_mmap`                | `mmap`         |
+| `rds_message_copy_from_user` | `sendmsg`      |
+| `unix_dgram_sendmsg`         | `sendmsg`      |
+| `unix_stream_sendmsg`        | `sendmsg`      |
+| `netlink_sendmsg`            | `sendmsg`      |
+| `tcp_send_rcvq(inet6)`       | `sendto`       |
+| `tcp_send_rcvq`              | `sendto`       |
+| `tun_build_skb`              | `write`        |
+| `tun_alloc_skb`              | `write`        |
+| `tap_alloc_skb`              | `write`        |
+| `pipe_write`                 | `write`        |
+| `fuse_do_ioctl`              | `ioctl`        |
+| `io_uring_mmap`              | `mmap`         |
+| `array_map_mmap`             | `mmap`         |
+| `ringbuf_map_mmap`           | `mmap`         |
+| `aead_sendmsg`               | `sendmsg`      |
+| `skcipher_sendmsg`           | `sendmsg`      |
+| `mptcp_sendmsg`              | `sendmsg`      |
+| `xsk_mmap`                   | `mmap`         |
+
+
 Some tricks
 
 - sendmsg - the buffer allocated by sendmsg is released immediately. However, we can leverage `setsockopt(SO_{SND,RCV}BUF)` to fill the send and receive buffer, preventing the buffer from being released.
@@ -594,7 +622,6 @@ Some tricks
 - pipe_buffer - we can use `fcntl(F_SETPIPE_SZ)` to adjust the size.
 
 - msg_msg - with `MSG_COPY`, we can leak addresses without releasing the object.
-
 
 
 ### Features
@@ -651,6 +678,89 @@ Interrupt disabled / enabled
 - `disable_irq()` internally calls `__irq_disable()`, which ultimately executes the `cli` instruction to disable interrupts; enabling interrupts follows a similar path and eventually executes the `sti` instruction.
 - Even though `cli` clears the IF (Interrupt Enable) flag, the NMI (Non-Maskable Interrupt), whose interrupt number is 2, can still be triggered.
 
+Buddy system
+
+- page from SLUB: `MIGRATE_UNMOVABLE`
+- page from pipe: `MIGRATE_UNMOVABLE`
+- page from SYS_mmap anonymous page: `MIGRATE_MOVABLE`
+
+Linked List Operation
+
+- `list_init(struct list_head *entry)`
+    ``` c
+    entry->next = entry;
+    entry->prev = entry;
+    ```
+
+- `list_add(struct list_head *new, struct list_head *head)`
+    ``` c
+    new->next = head->next;
+    new->prev = head;
+    head->next->prev = new;
+    head->next = new;
+    ```
+
+- `list_del(struct list_head *entry)`
+    ``` c
+    entry->prev->next = entry->next;
+    entry->next->prev = entry->prev;
+    ```
+
+- `list_del_init(struct list_head *entry)`
+    ``` c
+    entry->prev->next = entry->next;
+    entry->next->prev = entry->prev;
+    entry->next = entry;
+    entry->prev = entry;
+    ```
+
+- `list_move(struct list_head *entry, struct list_head *head)`
+    ``` c
+    entry->prev->next = entry->next;
+    entry->next->prev = entry->prev;
+
+    entry->next = head->next;
+    entry->prev = head;
+    head->next->prev = entry;
+    head->next = entry;
+    ```
+
+- `list_empty(struct list_head *head)`
+    ``` c
+    return (head->next == head);
+    ```
+
+- `list_first_entry(type, head, member)`
+    ``` c
+    container_of(head->next, type, member);
+    ```
+
+- `list_for_each_entry(pos, head, member)`
+    ``` c
+    for (pos = container_of((head)->next, typeof(*pos), member);
+        &pos->member != (head);
+        pos = container_of(pos->member.next, typeof(*pos), member))
+    ```
+
+- `list_for_each_entry_safe(pos, n, head, member)`
+    ``` c
+    for (pos = container_of((head)->next, typeof(*pos), member),
+        n = container_of(pos->member.next, typeof(*pos), member);
+        &pos->member != (head);
+        pos = n, n = container_of(n->member.next, typeof(*n), member))
+    ```
+
+Real Mode Interrupt Vector Table (IVT)
+
+- The physical memory address range **0x0000 ~ 0x0FFF** is reserved for the Interrupt Vector Table (IVT) in x86 real mode.
+- The IVT contains 256 entries, each 4 bytes in size.
+- Each entry consists of a 16-bit offset and a 16-bit segment, forming a far pointer to the interrupt handler.
+- Example:
+    - INT 0 retrieves its handler address from *(uint32_t *)0, i.e., offset 0.
+    - Suppose memory at 0x0000 contains: **0x53 0xFF 0x00 0xF0**
+    - This corresponds to: offset = 0xFF53, segment = 0xF000
+    - Actual address executed:
+        - physical_address = (segment << 4) + offset = 0xFFF53
 
 ## Debug
 ``` bash
@@ -677,6 +787,12 @@ slab info kmalloc-96
 
 # show page tables
 pt
+```
+
+gdb displays assembly code based only on rip, but in the real mode, actual execution address should be:
+
+```
+address = (cs << 4) + rip
 ```
 
 ### pahole
@@ -731,6 +847,27 @@ brew install scrcpy
 
 # run (with device connected)
 scrcpy
+```
+
+### Kernel Source code
+
+Get Git hash from `uname` output:
+
+``` bash
+akita:/ $ uname -a
+Linux localhost 6.1.129-android14-11-g4cadbfbbe186-ab13408047 #1 SMP PREEMPT Fri Apr 25 02:03:44 UTC 2025 aarch64 Toybox
+```
+
+Locate the corresponding commit:
+
+```
+https://android.googlesource.com/kernel/common/+/4cadbfbbe186
+```
+
+Download the source archive:
+
+```
+https://android.googlesource.com/kernel/common/+archive/4cadbfbbe186.tar.gz
 ```
 
 ### Phone
