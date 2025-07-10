@@ -242,7 +242,13 @@ ext2/3/4 root filesystem (ext4)
 
 Modify the rootfs of kernelCTF image:
 ``` bash
-$ touch ~/rootfs/chroot/dev/mali0
+$ file rootfs_v3.img
+rootfs_v3.img: DOS/MBR boot sector; partition 1 : ID=0x83, active, start-CHS (0x0,32,33), end-CHS (0x2a,42,32), startsector 2048, 8386560 sectors
+
+# 1048576 = 2048 (startsector) * 512 (sector size)
+$ sudo mount -o loop,offset=1048576 rootfs_v3.img rootfs
+
+$ touch rootfs/chroot/dev/mali0
 ```
 
 Patch for `rootfs/home/user/nsjail.cfg`:

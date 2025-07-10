@@ -680,9 +680,56 @@ Interrupt disabled / enabled
 
 Buddy system
 
-- page from SLUB: `MIGRATE_UNMOVABLE`
-- page from pipe: `MIGRATE_UNMOVABLE`
-- page from SYS_mmap anonymous page: `MIGRATE_MOVABLE`
+- page from SLUB: **`MIGRATE_UNMOVABLE`**
+    ``` c
+    static struct slab *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
+    {
+        alloc_gfp = (flags | __GFP_NOWARN | __GFP_NORETRY) & ~__GFP_NOFAIL;
+        // [...]
+        slab = alloc_slab_page(alloc_gfp, node, oo);
+        // [...]
+    }
+    ```
+    - P.S. SLUB metadata is stored in `struct slab`, which is an union struct with `struct page`
+- page from pipe: **`MIGRATE_UNMOVABLE`**
+    ``` c
+    static ssize_t
+    pipe_write(struct kiocb *iocb, struct iov_iter *from)
+    {
+        // [...]
+        if (!page) {
+            page = alloc_page(GFP_HIGHUSER | __GFP_ACCOUNT);
+        }
+        // [...]
+    }
+    ```
+- page from anonymous page: **`MIGRATE_MOVABLE`**
+    ```c
+    #define vma_alloc_zeroed_movable_folio(vma, vaddr) \
+        vma_alloc_folio(GFP_HIGHUSER_MOVABLE | __GFP_ZERO, 0, vma, vaddr, false)
+
+    static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
+    {
+        // [...]
+        folio = vma_alloc_zeroed_movable_folio(vma, vmf->address);
+        if (!folio)
+            goto oom;
+        // [...]
+    }
+    ```
+- page from aio ring buffer: **`MIGRATE_UNMOVABLE`**
+    ``` c
+    static int aio_setup_ring(struct kioctx *ctx, unsigned int nr_events)
+    {
+        // [...]
+        for (i = 0; i < nr_pages; i++) {
+            struct page *page;
+            page = find_or_create_page(file->f_mapping,
+                        i, GFP_USER | __GFP_ZERO);
+        }
+        // [...]
+    }
+    ```
 
 Linked List Operation
 
@@ -761,6 +808,25 @@ Real Mode Interrupt Vector Table (IVT)
     - This corresponds to: offset = 0xFF53, segment = 0xF000
     - Actual address executed:
         - physical_address = (segment << 4) + offset = 0xFFF53
+
+Common VMA Flags Explained
+
+| Flag            | Definition                                                                                                              | Others                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `VM_PFNMAP`     | Indicates the VMA maps physical page frames directly (not regular anonymous or file-backed memory).                     | Use `remap_pfn_range()` instead of `vm_insert_pfn()` |
+| `VM_MAYWRITE`   | Marks the VMA as potentially writable.                                                                                  | `mmap(PROT_WRITE)` but later `mprotect(PROT_READ)`   |
+| `VM_DONTEXPAND` | Prevents the VMA from being automatically expanded.                                                                     | `brk()` or `mmap(VM_GROWSDOWN)`                      |
+| `VM_IO`         | Indicates the VMA is used for memory-mapped I/O (MMIO). The kernel avoids **swapping** or direct access to these pages. |                                                      |
+| `VM_DONTCOPY`   | Prevents this VMA from being duplicated during a `fork()`.                                                              | `fork()`                                             |
+
+Common VMA Operations and Their Triggers
+
+| Operations | Triggered by                                                                 |
+| ---------- | ---------------------------------------------------------------------------- |
+| `.open`    | When a new VMA is created or split — e.g., `madvise()`, `fork()`, `munmap()` |
+| `.close`   | When a VMA is destroyed — e.g., `munmap()`, process exit                     |
+| `.mremap`  | Directly triggered by `mremap()` system call                                 |
+| `.fault`   | page fault (e.g., memory access to an unmapped or lazy area)                 |
 
 ## Debug
 ``` bash
