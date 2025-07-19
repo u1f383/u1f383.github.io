@@ -503,7 +503,7 @@ ROP return to userspace
 
     void win()
     {
-        system("/bin/sh");
+        execl("/bin/sh", "sh", (char *)NULL);
     }
 
     void save_state()
