@@ -334,11 +334,11 @@ If the cross-cache attempt succeeds, the heap layout should look like:
 ...
 
                         pipe_buffer[0]->page
-0xffff888007645840:     0xffffea000017ffc0            0x0000100000000000
+0xffff888007645840:     0xffffea0000180200            0x0000100000000000
 0xffff888007645850:     0xffffffff82c6e280            0x0000000000000010
 
                         pipe_buffer[0]->private       pipe_buffer[1]->page
-0xffff888007645860:     0x0000000000000000            0xffffea0000180200
+0xffff888007645860:     0x0000000000000000            0xffffea0000180240
 0xffff888007645870:     0x0000100000000000            0xffffffff82c6e280
 0xffff888007645880:     0x0000000000000010            0x0000000000000000
 
