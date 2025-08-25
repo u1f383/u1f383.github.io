@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Cross Cache Attack CheetSheet"
+title:  "Cross Cache Attack CheatSheet"
 categories: linux
 ---
 
@@ -238,3 +238,21 @@ SYSCALL_DEFINE(/* ... */)
     return 0;
 }
 ```
+
+## 4. Notes
+
+- If a full slab on CPU-0 has **one object freed** [1], and CPU-1 has a partial slab [2], the freed object will **be placed into CPU-1’s partial**.
+    ``` c
+    prior = slab->freelist;
+    if (likely(!n)) {
+        if (likely(was_frozen)) {
+            stat(s, FREE_FROZEN);
+        } else if (kmem_cache_has_cpu_partial(s) /* [2] */ && !prior /* [1] */) {
+            put_cpu_partial(s, slab, 1);
+            stat(s, CPU_PARTIAL_FREE);
+        }
+        return;
+    }
+    ```
+    - Solution: Make the full slab non-full from the start (by freeing one more object). This ensures `prior` will not be NULL.
+- If CPU-1 is empty, the object freed from CPU-0 will be placed into CPU-1, making it a partial slab.
