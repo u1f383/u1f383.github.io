@@ -151,3 +151,33 @@ I made some notes while rooting my Google Pixel 8a and shared them here. Most pa
     uid=0(root) gid=0(root) groups=0(root) context=u:r:magisk:s0
     ```
     - A prompt will appear on your phone — tap `Allow` to grant root access.
+
+## 6. Extract Binary From Image
+
+Android doesn't allow users to downgrade to an older version, so the only way to retrieve older binaries is from an image file.
+
+``` bash
+$ file system_ext.img
+system_ext.img: Linux rev 1.0 ext2 filesystem data, UUID=d3dc357b-9d8c-57f3-af38-1dda11821d01, volume name "system_ext" (extents) (large files) (huge files)
+```
+
+However, you may encounter issues when trying to mount it on an Ubuntu VM:
+
+``` bash
+$ sudo mount system_ext.img mnt
+mount: /tmp/mnt: wrong fs type, bad option, bad superblock on /dev/loop6, missing codepage or helper program, or other error.
+       dmesg(1) may have more information after failed mount system call.
+
+$ dmesg
+[679270.016567] loop6: detected capacity change from 0 to 552272
+[679270.024279] EXT4-fs (loop6): couldn't mount RDWR because of unsupported optional features (4000)
+```
+
+This happens because Ubuntu doesn’t support the large directory feature (0x4000).
+
+To work around this, you can use **debugfs**, an interactive file system debugger, to view and extract files instead of mounting the image:
+
+``` bash
+debugfs system_ext.img
+dump /bin/hw/vendor.google.edgetpu_app_service@1.0-service ./old_edgetpu_app_service
+```
