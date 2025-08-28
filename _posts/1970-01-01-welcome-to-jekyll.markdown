@@ -932,6 +932,12 @@ brew install scrcpy
 
 # run (with device connected)
 scrcpy
+
+# show all packages and the corresponding UIDs
+pm list packages -U # these info also can be found in /data/system/packages.list
+
+# show all IPC services
+service list
 ```
 
 ### Kernel Source code
