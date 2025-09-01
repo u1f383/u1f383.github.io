@@ -174,3 +174,7 @@ These registers dumped by the kernel are valuable:
 ```
 
 As a result, if we can reliably **trigger a call to `WARN()`, `WARN_ON()`, `WARN_ON_ONCE()` or `__warn()`** from user space, we may be able to establish a stable kernel address leak primitive without relying on hardware side channels.
+
+Some ideas:
+- Call `kvmalloc()` with size larger than `INT_MAX`
+    - E.g., https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=0e23ac818f3afb16660b0ba384875d56a7013879
