@@ -306,6 +306,11 @@ file->f_count;
 #define sk_refcnt        __sk_common.skc_refcnt
 sk->__sk_common.skc_refcnt;
 
+// struct sk_buff
+// refcount++: skb_get()
+// refcount--: consume_skb() / kfree_skb() / skb_unref()
+skb->users;
+
 // struct mm_struct
 // refcount++: mmgrab()
 // refcount++: mmdrop()
@@ -969,3 +974,14 @@ Enable USB Debugging:
 
 Device Information:
 - deviceinfohw: https://www.deviceinfohw.ru/devices/uploads.php?platform=PLATFORM&cpu=CPU&brand=BRAND&filter_key=KEY&filter=&submit=
+
+## QEMU
+
+### Compilation
+
+``` bash
+mkdir build
+cd build
+../configure --enable-debug
+make -j`nproc`
+```
