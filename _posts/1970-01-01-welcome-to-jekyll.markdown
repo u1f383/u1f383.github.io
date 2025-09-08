@@ -943,6 +943,15 @@ pm list packages -U # these info also can be found in /data/system/packages.list
 
 # show all IPC services
 service list
+
+# show allowed SELinux policy
+sesearch --allow policy -s \<domain\> -t \<target\>
+## e.g., sesearch --allow policy -s untrusted_app -t gxp_device
+
+# list SELinux type
+sesearch -T policy
+## e.g., type_transition init vendor_toolbox_exec:process vendor_modprobe;
+## when init executes `vendor_toolbox_exec`, the forked process will enter `vendor_modprobe` domain
 ```
 
 ### Kernel Source code
