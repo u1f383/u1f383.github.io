@@ -897,11 +897,13 @@ pahole -C <struct_name> ./vmlinux
 ### Host
 
 Install adb on MacOS
+
 ``` bash
 brew install android-platform-tools
 ```
 
 Some helpful commands:
+
 ``` bash
 # list device
 adb devices
@@ -937,21 +939,37 @@ brew install scrcpy
 
 # run (with device connected)
 scrcpy
+```
 
+SELinux
+
+``` bash
+# download policy to local
+adb pull /sys/fs/selinux/policy ./policy
+
+# allow rule for source(domain) untrusted_app
+sesearch --allow -s untrusted_app ./policy
+
+# allow rule to target "wm_trace_data_file" for source(domain) system_server
+sesearch --allow -s system_server -t wm_trace_data_file ./policy
+
+## the corresponding directory or file of a target is defined in the "file_contexts" file
+## For example, "wm_trace_data_file" is in /system/etc/selinux/plat_file_contexts
+cat /system/etc/selinux/plat_file_contexts | grep wm_trace
+## output: /data/misc/wmtrace(/.*)?        u:object_r:wm_trace_data_file:s0
+## other common directories:
+##   - /vendor/etc/selinux/vendor_file_contexts
+##   - /product/etc/selinux/product_file_contexts
+```
+
+Others
+
+``` bash
 # show all packages and the corresponding UIDs
 pm list packages -U # these info also can be found in /data/system/packages.list
 
 # show all IPC services
 service list
-
-# show allowed SELinux policy
-sesearch --allow policy -s \<domain\> -t \<target\>
-## e.g., sesearch --allow policy -s untrusted_app -t gxp_device
-
-# list SELinux type
-sesearch -T policy
-## e.g., type_transition init vendor_toolbox_exec:process vendor_modprobe;
-## when init executes `vendor_toolbox_exec`, the forked process will enter `vendor_modprobe` domain
 ```
 
 ### Kernel Source code
