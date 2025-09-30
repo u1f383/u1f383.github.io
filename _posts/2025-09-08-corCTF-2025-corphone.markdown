@@ -443,7 +443,24 @@ A common target is **the page backing `struct pipe_buffer`**, which allows us to
 
 During the CTF, the success rate of reclaiming the entry object in my exploit was relatively low, which was quite frustrating. After comparing my exploit with the author's, we discovered that the author used a **pipe fd** to store data for command usage, whereas my exploit relied on the file `/storage/emulated/0/Download/test`. This file resides under the mount point `/storage/emulated`, which is mounted as a **FUSE filesystem**.
 
-Since read/write operations on a FUSE filesystem are significantly slower than those on a pipe, this not only reduced the spraying efficiency but also introduced potential side effects, further decreasing the spray rate.
+Since read/write operations on a FUSE filesystem are significantly slower than those on a pipe, this not only reduced the spraying efficiency but also introduced potential side effects (our target page may be reclaimed accidentally by its write handler).
+
+```
+=> __alloc_pages
+=> __folio_alloc
+=> __filemap_get_folio
+=> pagecache_get_page
+=> f2fs_write_begin
+=> generic_perform_write
+=> f2fs_file_write_iter
+=> do_iter_write
+=> vfs_iter_write
+=> fuse_passthrough_write_iter
+=> fuse_file_write_iter
+=> vfs_write
+=> ksys_write
+=> __x64_sys_write
+```
 
 As a result, I revised my exploit by following the author's approach and **using a pipe fd** to store data:
 1. Open a pipe.

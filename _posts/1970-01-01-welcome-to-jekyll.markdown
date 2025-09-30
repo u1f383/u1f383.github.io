@@ -270,6 +270,23 @@ echo > /sys/kernel/debug/tracing/trace
 echo 0 > /sys/kernel/debug/tracing/tracing_on
 ```
 
+on Android
+
+``` bash
+echo 0 > /sys/kernel/tracing/tracing_on
+
+chmod 777 /sys/kernel/tracing/options/stacktrace
+echo 1 > /sys/kernel/tracing/options/stacktrace
+
+chmod 777 /sys/kernel/tracing/events/kmem/mm_page_alloc/enable
+echo 1 > /sys/kernel/tracing/events/kmem/mm_page_alloc/enable
+
+chmod 777 /sys/kernel/tracing/current_tracer
+echo 1 > /sys/kernel/tracing/current_tracer
+
+cat /sys/kernel/tracing/trace_pipe
+```
+
 ### kprobe
 
 ``` bash
@@ -606,29 +623,29 @@ Extend race window
 Page spraying
 > Based on paper "Take a Step Further: Understanding Page Spray in Linux Kernel Exploitation"
 
-| Function                     | Syscall        |
-| ---------------------------- | -------------- |
-| `packet_set_ring`            | `setsockopt`   |
-| `packet_snd`                 | `sendmsg`      |
-| `packet_mmap`                | `mmap`         |
-| `rds_message_copy_from_user` | `sendmsg`      |
-| `unix_dgram_sendmsg`         | `sendmsg`      |
-| `unix_stream_sendmsg`        | `sendmsg`      |
-| `netlink_sendmsg`            | `sendmsg`      |
-| `tcp_send_rcvq(inet6)`       | `sendto`       |
-| `tcp_send_rcvq`              | `sendto`       |
-| `tun_build_skb`              | `write`        |
-| `tun_alloc_skb`              | `write`        |
-| `tap_alloc_skb`              | `write`        |
-| `pipe_write`                 | `write`        |
-| `fuse_do_ioctl`              | `ioctl`        |
-| `io_uring_mmap`              | `mmap`         |
-| `array_map_mmap`             | `mmap`         |
-| `ringbuf_map_mmap`           | `mmap`         |
-| `aead_sendmsg`               | `sendmsg`      |
-| `skcipher_sendmsg`           | `sendmsg`      |
-| `mptcp_sendmsg`              | `sendmsg`      |
-| `xsk_mmap`                   | `mmap`         |
+| Useful | Function                     | Syscall        |
+| ------ | ---------------------------- | -------------- |
+|        | `packet_set_ring`            | `setsockopt`   |
+|        | `packet_snd`                 | `sendmsg`      |
+|        | `packet_mmap`                | `mmap`         |
+|        | `rds_message_copy_from_user` | `sendmsg`      |
+|     ✅️ | `unix_dgram_sendmsg`         | `sendmsg`      |
+|        | `unix_stream_sendmsg`        | `sendmsg`      |
+|        | `netlink_sendmsg`            | `sendmsg`      |
+|        | `tcp_send_rcvq(inet6)`       | `sendto`       |
+|        | `tcp_send_rcvq`              | `sendto`       |
+|        | `tun_build_skb`              | `write`        |
+|        | `tun_alloc_skb`              | `write`        |
+|        | `tap_alloc_skb`              | `write`        |
+|     ✅️ | `pipe_write`                 | `write`        |
+|        | `fuse_do_ioctl`              | `ioctl`        |
+|        | `io_uring_mmap`              | `mmap`         |
+|        | `array_map_mmap`             | `mmap`         |
+|        | `ringbuf_map_mmap`           | `mmap`         |
+|        | `aead_sendmsg`               | `sendmsg`      |
+|        | `skcipher_sendmsg`           | `sendmsg`      |
+|        | `mptcp_sendmsg`              | `sendmsg`      |
+|        | `xsk_mmap`                   | `mmap`         |
 
 
 Some tricks
@@ -647,6 +664,17 @@ Some tricks
 
 - msg_msg - with `MSG_COPY`, we can leak addresses without releasing the object.
 
+
+#### EoP Cheatsheet
+
+- Get root cred
+    - `commit_creds(prepare_kernel_cred(&init_task))`
+- Defeat chroot
+    - `current->fs = copy_fs_struct(&init_fs)`
+- Namespace
+    - `switch_task_namespaces(current, &init_nsproxy)`
+- SELinux
+    - Patch `avc_denied()`
 
 ### Features
 
@@ -944,6 +972,9 @@ scrcpy
 SELinux
 
 ``` bash
+# show the SELinux context of a file
+ls -Z /path/to/file
+
 # download policy to local
 adb pull /sys/fs/selinux/policy ./policy
 
@@ -1001,6 +1032,16 @@ Enable USB Debugging:
 
 Device Information:
 - deviceinfohw: https://www.deviceinfohw.ru/devices/uploads.php?platform=PLATFORM&cpu=CPU&brand=BRAND&filter_key=KEY&filter=&submit=
+
+### apk
+
+``` bash
+# extract apk
+apktool d XXXXX.apk -o out
+
+# view code
+jadx-gui XXXXX.apk
+```
 
 ## QEMU
 
