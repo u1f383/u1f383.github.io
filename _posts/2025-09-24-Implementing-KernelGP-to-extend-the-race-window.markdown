@@ -4,8 +4,7 @@ title:  "Implementing KernelGP to Extend the Race Window"
 categories: Android
 ---
 
-The talk [KernelGP: Racing Against the Android Kernel](https://www.youtube.com/watch?v=DJBGu2fSSZg) at OffensiveCon 2025 demonstrates four techniques to leverage Android’s internal design to extend the race window during kernel exploitation. In this post, I will walk through my exploration of the **first method** — **the proxy file descriptor** — and explain how I implemented it. I’ll also share some side notes on writing an Android app.  
-
+The talk [KernelGP: Racing Against the Android Kernel](https://www.youtube.com/watch?v=DJBGu2fSSZg) at OffensiveCon 2025 demonstrates four techniques to leverage Android’s internal design to extend the race window during kernel exploitation. In this post, I will walk through my exploration of the **first method** — **the proxy file descriptor** — and explain how I implemented it. I’ll also share some side notes on writing an Android app.
 
 ## 1. JNI
 
