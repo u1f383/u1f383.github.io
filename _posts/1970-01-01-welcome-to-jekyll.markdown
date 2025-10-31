@@ -396,6 +396,35 @@ spin_lock(&files->file_lock);
 spin_unlock(&files->file_lock);
 ```
 
+### Socket Structure Architecture
+
+ops
+
+```
+(struct net_proto_family) inet_family_ops
+             | (create)
+             v
+(struct proto_ops) inet_stream_ops
+             |
+             v
+(struct proto) tcp_prot
+```
+
+object
+
+```
+(int) file descriptor
+        | (lookup filetable)
+        v
+(struct file *) file
+        | (->private_data)
+        v
+(struct socket *) sock  -> ops (struct proto_ops)
+        | (->sk)
+        v
+(struct sock *) sk -> sk_prot (struct proto)
+```
+
 ### virt & page
 ``` c
 #define __START_KERNEL_map (0xffffffff80000000)
