@@ -425,6 +425,27 @@ object
 (struct sock *) sk -> sk_prot (struct proto)
 ```
 
+### Socket Data Operation
+
+A skb object
+
+```
+[ head ........ data ........ tail ........ end ]
+  ^              ^             ^             ^
+  |              |             |             |
+  skb->head      skb->data     skb->tail     skb->end
+```
+- Allocate skb: `skb = sock_alloc_send_skb(sk, headroom + payload_size + tailroom, ...)`
+    - Get a skb whose `->head` == `->data` == `->tail`
+- headroom: head ~ data
+    - Call `skb_reserve(skb, headroom)`
+        - Move `->data` and `->tail` with `headroom` size
+- payload: data ~ tail
+    - Call `void *payload_buf = skb_put(skb, payload_size)`
+        - Return pointer pointing to the start address of packet payload
+        - Move `->tail` with `payload_size` size
+- tailroom: tail ~ end
+
 ### virt & page
 ``` c
 #define __START_KERNEL_map (0xffffffff80000000)
