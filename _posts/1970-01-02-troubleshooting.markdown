@@ -102,3 +102,17 @@ In the case I encountered, I updated the URL from `http://ports.ubuntu.com/ubunt
 ### Custom Kernel Module
 
 If the kernel is compiled with `CONFIG_SECURITY_LOADPIN`, the LoadPin subsystem will be enabled and block all external kernel modules. You can add parameter `loadpin.inforce=0` in boot command line to disable it.
+
+
+### Build Blog
+
+Mostly just follows https://jekyllrb.com/docs/, but you may encounter some problems...
+
+``` bash
+brew install ruby@3.2
+## add the following line into .zshrc
+# export PATH="/opt/homebrew/opt/ruby@3.2/bin:$PATH"
+rm -rf ~/.bundle ~/.gem
+bundle install
+bundle exec jekyll serve
+```

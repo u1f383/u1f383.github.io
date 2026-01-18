@@ -28,7 +28,7 @@ github_username:  u1f383
 google_analytics: "G-3F7EJ8VW7Z"
 
 # Build settings
-remote_theme: jekyll/minima
+remote_theme: "jekyll/minima@1e8a445"
 plugins:
   - jekyll-feed
   - jekyll-remote-theme

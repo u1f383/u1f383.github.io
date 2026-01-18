@@ -181,6 +181,90 @@ dpkg-query -L linux-image-unsigned-$(uname -r)-dbgsym
 /usr/lib/debug/lib/modules/6.8.0-49-generic/kernel
 ```
 
+#### Runtime Debug
+
+On host first:
+
+``` bash
+# 1. install qemu & create vm disk
+sudo apt install qemu-system-x86
+qemu-img create -f qcow2 ubuntu.qcow2 50G
+
+# 2. get ubuntu server iso
+wget https://free.nchc.org.tw/ubuntu-cd/24.04.3/ubuntu-24.04.3-live-server-amd64.iso
+
+# 3. run vm to install
+qemu-system-x86_64 \
+    -enable-kvm \
+    -cpu host \
+    -smp 2 \
+    -m 4096 \
+    -drive file=ubuntu.qcow2,if=virtio,cache=writeback,format=qcow2 \
+    -cdrom ubuntu-24.04.3-live-server-amd64.iso \ # remove this line after install
+    -nic user,model=virtio-net-pci,hostfwd=tcp::5555-:22 \
+    -s
+```
+
+Then in VM:
+
+``` bash
+# 1. install ssh server
+sudo apt install openssh-server
+
+# 2. follow https://documentation.ubuntu.com/server/explanation/debugging/debug-symbol-packages/index.html
+sudo apt install ubuntu-dbgsym-keyring
+echo "Types: deb
+URIs: http://ddebs.ubuntu.com/
+Suites: noble noble-updates noble-proposed 
+Components: main restricted universe multiverse
+Signed-by: /usr/share/keyrings/ubuntu-dbgsym-keyring.gpg" | \
+sudo tee -a /etc/apt/sources.list.d/ddebs.sources
+sudo apt-get update
+
+# 3. download dbgsym kernel
+# sudo apt install linux-image-unsigned-$(uname -r)-dbgsym
+# sudo apt install linux-image-$(uname -r)-dbgsym
+# sudo apt source linux-image-$(uname -r)
+
+# 4. modify kernel cmdline
+vim /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="nokaslr"
+
+# 5. update grub
+sudo update-grub
+```
+
+Finally on Host:
+
+``` bash
+# 1. copy vmlinux from VM
+scp -P5555 bbb@127.0.0.1:/usr/lib/debug/boot/vmlinux-6.8.0-85-generic .
+
+# 2. download kernel source
+wget http://tw.archive.ubuntu.com/ubuntu/pool/main/l/linux/linux_6.8.0.orig.tar.gz
+gunzip linux_6.8.0.orig.tar.gz
+
+wget http://tw.archive.ubuntu.com/ubuntu/pool/main/l/linux/linux_6.8.0-85.85.diff.gz
+gunzip linux_6.8.0-85.85.diff.gz
+tar xvf linux_6.8.0.orig.tar
+
+# 3. apply patch
+cd linux-6.8/
+patch -i ../linux_6.8.0-85.85.diff -p 1
+
+# 4. debug the kernel
+echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+pwndbg ../../vmlinux-6.8.0-85-generic -ex "target remote :1234"
+
+# 5. update source path
+pwndbg> info source
+Current source file is /build/linux-ePXlNv/linux-6.8.0/arch/x86/kernel/paravirt.c
+...
+
+set substitute-path /build/linux-ePXlNv/linux-6.8.0 .
+ctx # reload and show the source
+```
+
 ### RHEL (RedHat Enterprise for Linux)
 
 #### Source Code
@@ -290,6 +374,8 @@ cat /sys/kernel/tracing/trace_pipe
 ### kprobe
 
 ``` bash
+echo 1 > /sys/kernel/debug/tracing/tracing_on
+
 # Set a return probe (r = return probe) on the function and print its return value
 echo 'r:myprobe <function_name> $retval' > /sys/kernel/debug/tracing/kprobe_events
 echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
@@ -301,7 +387,7 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
 echo 0 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
 
 # Set an entry probe (p = probe) on the function and print the third argument
-echo 'p:myprobe <function_name> $arg3' > /sys/kernel/debug/tracing/kprobe_events
+echo 'p:myprobe <module_name (opt)>:<function_name> $arg3' > /sys/kernel/debug/tracing/kprobe_events
 echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
 echo 0 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
 
@@ -378,6 +464,16 @@ u->__count;
 // refcount++: atomic_inc(&oldf->count)
 // refcount--: put_files_struct()
 files->count;
+
+// struct inode
+// refcount++: ihold()
+// refcount--: iput()
+inode->i_count;
+
+// struct dentry
+// refcount++: dget()
+// refcount--: dput(), fast_dput()
+dentry->d_lockref;
 ```
 
 ### Common Objects Lock Functions
@@ -648,6 +744,12 @@ Extend race window
     timerfd_settime(timer_fd, TFD_TIMER_CANCEL_ON_SET, &new, NULL);
     ```
 
+Useful Kernel Variable
+
+- `__per_cpu_offset[]`: leak per-cpu address
+- `vmemmap_base`: virtual memory map address
+- `vmalloc_base`: vmalloc base address
+- `page_offset_base`: directly mapping base address
 
 #### Objects
 
@@ -1028,6 +1130,8 @@ ls -Z /path/to/file
 # download policy to local
 adb pull /sys/fs/selinux/policy ./policy
 
+## sudo apt install setools (on Ubuntu)
+
 # allow rule for source(domain) untrusted_app
 sesearch --allow -s untrusted_app ./policy
 
@@ -1083,7 +1187,7 @@ Enable USB Debugging:
 Device Information:
 - deviceinfohw: https://www.deviceinfohw.ru/devices/uploads.php?platform=PLATFORM&cpu=CPU&brand=BRAND&filter_key=KEY&filter=&submit=
 
-### apk
+### Extract apk
 
 ``` bash
 # extract apk
@@ -1091,6 +1195,99 @@ apktool d XXXXX.apk -o out
 
 # view code
 jadx-gui XXXXX.apk
+```
+
+### Build Magisk on macOS
+
+[reference](https://topjohnwu.github.io/Magisk/build.html)
+
+``` bash
+git clone --recurse-submodules https://github.com/topjohnwu/Magisk.git
+
+export ANDROID_HOME=~/Library/Android/sdk
+export ANDROID_STUDIO=/Applications/Android\ Studio.app
+./build.py ndk
+./build.py all
+```
+
+target: `./native/out/arm64-v8a/magiskboot`
+
+### Get Kernel Module
+
+There are two img files containing kernel modules: `vendor_dlkm.img` and `vendor_boot.img`:
+
+``` bash
+## 1. vendor_dlkm.img
+debugfs -R "ls -l lib/modules" vendor_dlkm.img
+
+## 2. vendor_boot.img
+./magiskboot unpack ./vendor_boot.img
+
+ls -al ./vendor_ramdisk
+# ... 16K.cpio and ramdisk.cpio
+
+cpio -i -d < ./16K.cpio
+```
+
+target: `./lib/modules/6.1.129-android14-11-g4cadbfbbe186-ab13408047_16k/mali_kbase.ko`
+
+### Kernel ELF image
+
+1. [AOSP GKI release](https://source.android.com/docs/core/architecture/kernel/gki-android14-6_1-release-builds?hl=zh-tw)
+2. Get SHA1 (e.g., `4cadbfbbe186`)
+``` bash
+akita:/ # uname -a
+Linux localhost 6.1.129-android14-11-g4cadbfbbe186-ab13408047 #1 SMP PREEMPT Fri Apr 25 02:03:44 UTC 2025 aarch64 Toybox
+```
+3. Go go [Artifacts](https://ci.android.com/builds/submitted/13408047/kernel_aarch64/latest?hl=zh-tw)
+4. `vmlinux` is what you want
+
+## Android Exploit Note
+
+allowed syscall
+- [SYSCALLS.TXT](https://android.googlesource.com/platform/bionic/+/HEAD/libc/SYSCALLS.TXT)
+
+### Runtime Debug
+
+Quick debug:
+
+``` bash
+mount -t debugfs none /sys/kernel/debug
+echo 0 > /proc/sys/kernel/kptr_restrict
+# ... write kprobe events
+echo 1 > /sys/kernel/debug/tracing/tracing_on
+
+cat /sys/kernel/debug/tracing/trace
+```
+
+Event example:
+
+``` bash
+## Format
+# echo 'p:myprobe <module_name>:<function_name> <show_arguments>' > /sys/kernel/debug/tracing/kprobe_events
+# echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+
+echo 'p:myprobe mali_kbase:kbase_csf_queue_unbind $arg1 data_ptr=+0x0($arg1):u64' > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable
+
+echo 'p:myprobe2 mali_kbase:kbase_csf_alloc_command_stream_user_pages $arg2 myval=+0x68($arg2):s32' >> /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe2/enable
+```
+
+Get last crash dump:
+
+``` bash
+cat /sys/fs/pstore/console-ramoops-0
+```
+
+Other helpers:
+
+``` bash
+# won't panic when trigger oops
+echo 0 > /proc/sys/kernel/panic_on_oops
+
+# force reboot
+echo b > /proc/sysrq-trigger
 ```
 
 ## QEMU

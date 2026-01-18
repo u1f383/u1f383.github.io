@@ -34,6 +34,9 @@ The key is **step 4**, and the conditions under which the buddy system reclaims 
 
 ## 2. Cross-Cache Attack
 
+> Ref: [PSPRAY: Timing Side-Channel based Linux Kernel Heap Exploitation Technique](https://www.usenix.org/system/files/sec23summer_79-lee-prepub.pdf)
+<img src="/assets/image-20240615160217077.png" alt="image-20240615160217077" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
 ### 2.1. Side Channel Slab State Using SLUBStick
 
 Before spraying, the state of the slab cache is unknown, and several key values need to be determined:
@@ -256,3 +259,24 @@ SYSCALL_DEFINE(/* ... */)
     ```
     - Solution: Make the full slab non-full from the start (by freeing one more object). This ensures `prior` will not be NULL.
 - If CPU-1 is empty, the object freed from CPU-0 will be placed into CPU-1, making it a partial slab.
+- The following is the execution flow of releasing a slab:
+```
+__free_slab()
+=> __free_pages()
+  => free_the_page()
+    => if (pcp_allowed_order(order)) // 0,1,2,3
+     => free_unref_page()
+       => pcp = pcp_spin_trylock(zone->per_cpu_pageset)
+       => free_unref_page_commit(zone, pcp, page, MIGRATE_UNMOVABLE, order=1)
+         => list_add(&page->pcp_list, &pcp->lists[pindex])
+         => if count exceeds the threshold (pcp->count >= high), some pages will be back to buddy system
+          => free_pcppages_bulk()
+```
+- For allocation:
+```
+rmqueue_pcplist()
+=> list = &pcp->lists[order_to_pindex(migratetype, order)]
+=> __rmqueue_pcplist(..., list)
+ => page = list_first_entry(list, struct page, pcp_list)
+ => list_del(&page->pcp_list)
+```

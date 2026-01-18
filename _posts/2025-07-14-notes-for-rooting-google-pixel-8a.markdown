@@ -50,7 +50,9 @@ I made some notes while rooting my Google Pixel 8a and shared them here. Most pa
 
 1. Go to `Settings` > `About phone`, and note the current version (e.g., **`BP31.250523.006`**)
 2. Download the factory image from the official Google site:
-    - https://developers.google.com/android/images
+    - [release](https://developers.google.com/android/images?hl=zh-tw)
+    - [beta](https://developer.android.com/about/versions/16/download?utm_source&hl=zh-tw)
+    - [mapping for release ID (e.g., BP3A.250905.014) and release tag (e.g., android-16.0.0_r3)](https://source.android.com/docs/setup/reference/build-numbers?hl=zh-tw)
     - Please download the factory image that matches the corresponding device codename.
         - For example, the codename for the **Pixel 8a** is **akita**.
     - Target version used here: **`BP2A.250705.008`**
