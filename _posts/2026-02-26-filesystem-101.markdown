@@ -1,0 +1,453 @@
+---
+layout: post
+title:  "Filesystem 101"
+categories: Linux
+---
+
+Recently I explored the filesystem design of Linux and found it is little more complicated than I expected, so I decided to write a post organizing it. This post analyzes the filesystem from a high-level view, skipping detailed implementation. I hope that after reading it, you will understand more about the Linux filesystem.
+
+# 1. Overview
+
+## 1.1. file, dentry and inode
+
+First, we start with how the simple syscall `open` works to figure out the filesystem internal.
+
+When you call the `open` system call, `__do_sys_open()` is the entry point in kernel space. In `do_sys_openat2()`, the kernel gets a file descriptor, opens the file, and installs it into process's file table.
+
+```
+__do_sys_open(filename, flags, mode)
+=> do_sys_open(AT_FDCWD, filename, flags, mode)
+  => do_sys_openat2(dfd, filename, &how)
+    => fd = get_unused_fd_flags(how->flags)
+    => f = do_filp_open(dfd, tmp, &op)
+    => fd_install(fd, f)
+```
+
+In `path_openat()`, the kernel allocates an empty `file` object, then resolves the pathname, and finally binds the name data (`nd`) to that `file` object by calling `do_open()`.
+
+```
+do_filp_open(dfd, pathname, op)
+=> set_nameidata(&nd, dfd, pathname, NULL)
+=> path_openat(&nd, op, flags | LOOKUP_RCU)
+  => file = alloc_empty_file(op->open_flag, current_cred())
+  
+  // ========= resolution =========
+  => s = path_init(nd, flags)
+  => link_path_walk(s, nd)
+  => s = open_last_lookups(nd, file, op)
+  
+  => do_open(nd, file, op)
+```
+
+The whole process raises three questions:
+1. How does the file table work?
+2. How does the kernel resolve pathname?
+3. How does the binding work?
+
+<br>
+
+The first question, **"how the file table works?"**, is the easiest.
+
+The purpose of the file descriptor is to let a process use a number to represent a `file` object. This implies there is an array-like structure that maintains the mapping between the number and the `file` object, and that is exactly what **file table** does.
+
+When calling `get_unused_fd_flags()`, the kernel gets the file table from the **current process** (`current->files`). It then finds an unused number and marks it as in use.
+
+```
+get_unused_fd_flags(flags)
+=> __get_unused_fd_flags(flags, rlimit(RLIMIT_NOFILE))
+  => alloc_fd(0, nofile, flags)
+    => files = current->files
+    => fdt = files_fdtable(files)
+    => fd = find_next_fd(fdt, fd)
+    => __set_open_fd(fd, fdt, flags & O_CLOEXEC)
+```
+
+The `fd_install()` is quite simple. It assigns the `file` object to the file table's fd array `fdt->fd[]`, using the pre-reserved `fd` as the index.
+
+```
+fd_install(fd, file)
+=> files = current->files
+=> fdt = files_fdtable(files)
+=> rcu_assign_pointer(fdt->fd[fd], file)
+```
+
+The next time we call any syscall that requires file operations, we just pass the file descriptor to the kernel. Then `fdget()` or similar functions are used to retrieve the corresponding `file` object.
+
+```
+fdget(fd)
+=> __fget_light(fd, FMODE_PATH)
+  => files = current->files
+  => file = files_lookup_fd_raw(files, fd)
+    => rcu_dereference_raw(fdt->fd[fd&mask])
+  => return BORROWED_FD(file)
+```
+
+<br>
+
+The next question is **"how the kernel resolves pathname?"**
+
+There are three steps: setting up resolution environment, resolving the directory and resolving the final file. These steps correspond to three different function calls, which we saw in the `path_openat()`.
+
+The `path_init()` is called first to set up the resolution environment. Basically, it decides the **starting director**y, since the `open` syscall allows a process to resolve a pathname from a specified directory.
+
+If the pathname starts with `"/"`, the kernel sets the starting directory to **root directory**. Otherwise, the kernel checks **directory file descriptor** (`dfd`).
+
+```
+path_init(nd, flags)
+=> s = nd->pathname
+=> if (*s == '/' && ...)
+  => nd_jump_root(nd)
+    => set_root(nd)
+      => fs = current->fs
+      => nd->root = fs->root
+    => nd->path = nd->root
+    => nd->inode = nd->path.dentr->d_inode
+
+=> if (nd->dfd == AT_FDCWD)
+  => fs = current->fs
+  => nd->path = fs->pwd
+  => nd->inode = nd->path.dentry->d_inode
+
+=> else
+  => f = fdget_raw(nd->dfd)
+  => nd->path = fd_file(f)->f_path
+  => nd->inode = nd->path.dentry->d_inode
+```
+
+You might already notice the similarity. Although the operations differ, the goal is same: set **`nd->path`** and **`nd->inode`**. Moreover, if you look more carefully, you may notice that `nd->inode` actually comes from a field inside `nd->path`. The `nd->path` is a `path` object consisting of `mnt` and `dentry`.
+
+``` c
+struct path {
+    struct vfsmount *mnt;
+    struct dentry *dentry;
+}
+```
+
+With `nd->path` set to the starting directory, we move to next step to resolve the **directory part** of the pathname.
+
+Generally, `link_path_walk()` seperates the whole pathname info components **using one or more `"/"` as delimiter** and resolves them one at a time. For example, the pathname `"a/b///c/d"` will be seperated into `"a"`, `"b"`, `"c"` and `"d"`.
+
+Internally, `__d_lookup_rcu()` finds the corresponding **`dentry`** object for the current component based on the current directory (`parent`) and name string (`&nd->last`). Interestingly, all `dentry` objects are stored in bucket lists that can be referenced from a **global** hash table (`dentry_hashtable`).
+
+After successfully obtaining the `dentry` object, `step_into()` is called to **update the current directory to the found `dentry` object**. This function also handles the symlink resolution, but we will not discuss it further here.
+
+The entire process may repeat several times until it reaches the final component.
+
+```
+link_path_walk(name, nd)
+=> for each components
+  => nd->last.name = name
+  => link = walk_component(nd, WALK_MORE)
+    
+    => dentry = lookup_fast(nd)
+      => parent = nd->path.dentry
+      => dentry = __d_lookup_rcu(parent, &nd->last, &nd->next_seq)
+        => b = d_hash(hashlen)
+          => dentry_hashtable + hash value
+    
+    => step_into(nd, flags, dentry)
+      => handle_mounts(nd, dentry, &path)
+        => path->mnt = nd->path.mnt
+        => path->dentry = dentry
+      => nd->path = path
+      => nd->inode = path.dentry->d_inode
+```
+
+Finally, `open_last_lookups()` is called to **resolve the final component** (the file itself). This function is basically the same as `walk_component()` if the file already exists. However, the main difference is that `walk_component()` returns an error if `dentry` doesn't exist, while `open_last_lookups()` **creates a new `dentry` by `__d_alloc()`**.
+
+This kind of `dentry` is called a **negative dentry**, meaning the `dentry` has no associated `inode` (i.e., no actual file on disk), but it still exists in the dcache and can be accessed. It is required because a process is able to pass `O_CREAT` option to create a new file if it doesn't exist.
+
+Later, the kernel calls the inode operations `.create` to create a **`inode`** and bind it to that `dentry`. How the kernel creates the `inode` depends on the filesystem. For instance, the shmem filesystem calls `shmem_get_inode()` to allocate a shmem inode.
+
+```
+open_last_lookups(nd, file, op)
+=> dentry = lookup_fast_for_open(nd, open_flag)
+  => dentry = lookup_fast(nd)
+  => return dentry
+
+=> if not found
+  => dentry = lookup_open(nd, file, op, got_write)
+    => dentry = d_lookup(dir, &nd->last)
+    => dentry = d_alloc_parallel(dir, &nd->last, &wq)
+      => new = __d_alloc(parent->d_sb, name)
+        => dentry = kmem_cache_alloc_lru(dentry_cache)
+        => dentry->d_op = sb->__s_d_op
+      => return new
+    
+    => dir_inode->i_op->create(idmap, dir_inode, dentry)
+      => inode = ...
+      => d_instantiate(dentry, inode)
+        => __d_set_inode_and_type(dentry, inode, add_flags)
+          => dentry->d_inode = inode
+
+=> step_into(nd, WALK_TRAILING, dentry)
+```
+
+By now, we know that the pathname resolution is typically a `dentry` object lookup. It starts by setting the starting directory, seperating pathname into multiple components, and then retrieving the corresponding `dentry` from the hash bucket list.
+
+<br>
+
+The last question, **"How does the binding work?"**, is related to how a file accesses the metadata such as permissions. Internally, `vfs_open()` stores path information for future lookups (`file->__f_path`), and `do_dentry_open()` is called to store the `inode` and invokes filesystem's open handler (`f->f_op->open`). That's how the `file` object is associated with the `dentry` and the `inode`.
+
+```
+do_open(nd, file, op)
+=> vfs_open(&nd->path, file)
+  => file->__f_path = *path
+  => do_dentry_open(file, NULL)
+    => inode = f->f_path.dentry->d_inode
+    => f->f_inode = inode
+    => f->f_op = fops_get(inode->i_fop)
+    => f->f_op->open(inode, f)
+```
+
+In short, the architecture of the relationships among the file desciptor, `file`, `dentry`, `path` and `inode` is as follows:
+
+```
+    [fdtable]         (__f_path)
+fd --> [0] -> file A ------------> path
+                   |                |-- mnt
+         (f_inode) |                |-- dentry --
+                   |                             |
+                    ------> inode <--------------
+                                     (d_inode)
+       [1] -> file B
+       [X] -> ......
+```
+
+They each have different roles: a **file descriptor** is a number used to index file table; a **`file`** encapsulates regular files and sockets under the same interfaces for a clean and simple design; a **`path`** is used for lookup, containing mount object (`mnt`) and the `dentry`; a **`dentry`** contains pathname information for file lookup; an **`inode`** contains the file's metadata, including the owner, permissions, and file mapping information.
+
+## 1.2. fs_context, super_block and vfsmount
+
+After introducing the concepts of `inode` and `dentry`, we may wonder **where the `inode` comes from** and **how the mounting operation intializes `mnt` and builds the `inode` tree**. In this section, we will explore these questions and find the answers.
+
+Looking at the syscall `mount`, `do_new_mount()` calls `get_fs_type()` to find the `file_system_type` object with the matching name. The object contains metadata for creating a filesystem instance, and different filesystems may have their own implementations.
+
+`file_system_type` object is later used to initialize a filesystem context (`fc`) object by invoking its `.init_fs_context` handler. A filesystem context represents an **in-progress mount operation** and stores configuration before the superblock is created. The `.init_fs_context` handler typically allocates and initializes **filesystem-specific private data** and sets up the **context operations (`fc->ops`)**.
+
+After that, `parse_monolithic_mount_data()` is called to **parse the mount parameters**. For example, if you run the `mount` command with the options `-o ro,noexec`, the string `"ro,noexec"` will be parsed and used to update the filesystem context.
+
+Finally, `do_new_mount_fc()` is called to set up the superblock and mount point.
+
+```
+__do_sys_mount(dev_name, dir_name, type, flags, data)
+=> do_mount(kernel_dev, dir_name, kernel_type, flags, options)
+  => user_path_at(AT_FDCWD, dir_name, LOOKUP_FOLLOW, &path)
+  => path_mount(dev_name, &path, type_page, flags, data_page)
+    => do_new_mount(path, type_page, sb_flags, mnt_flags, dev_name, data_page)
+      => type = get_fs_type(fstype)
+        => fs = __get_fs_type(name, len)
+        => return fs
+      
+      => fc = fs_context_for_mount(type, sb_flags)
+        => alloc_fs_context(fs_type, NULL, sb_flags, 0, FS_CONTEXT_FOR_MOUNT)
+          => fc = kzalloc(sizeof(struct fs_context))
+          => fc->fs_type->init_fs_context(fc)
+
+      => parse_monolithic_mount_data(fc, data)
+        => if (fc->ops->parse_monolithic != NULL)
+          => fc->ops->parse_monolithic(fc, data)
+        => else
+          => generic_parse_monolithic(fc, data)
+      
+      => do_new_mount_fc(fc, path, mnt_flags)
+```
+
+Internally, the kernel calls filesystem's `.get_tree` handler to build the **file tree**. For filesystems that **require a backing image**, such as ext4, the handler initializes the superblock and sets up the root `inode` and root `dentry` based on on-disk metadata. Other `inode`s and `dentry`s are **loaded on demand** during path lookup rather than being created eagerly at mount time.
+
+In contrast, for filesystems that **do not require a backing image**, such as ramfs, the handler typically allocates a new superblock and creates only the root `inode` and `dentry` for the mount point.
+
+```
+do_new_mount_fc(fc, mountpoint, mnt_flags)
+=> mnt = fc_mount(fc)
+  => vfs_get_tree(fc)
+    => fc->ops->get_tree(fc)
+  => vfs_create_mount(fc)
+```
+Let's take ramfs as an example. Its `.init_fs_context` sets the context operations to `&ramfs_context_ops`, whose `.get_tree` handler is `ramfs_get_tree()`.
+
+``` c
+int ramfs_init_fs_context(struct fs_context *fc)
+{
+    // [...]
+    fc->ops = &ramfs_context_ops;
+    return 0;
+}
+
+static const struct fs_context_operations ramfs_context_ops = {
+    .free        = ramfs_free_fc,
+    .parse_param = ramfs_parse_param,
+    .get_tree    = ramfs_get_tree,
+};
+```
+
+Almost all filesystems follow a pattern for their `.get_tree` handler. They commonly call `get_tree_nodev()` or related functions, passing a filesystem-specific `fill_super` callback.
+
+`get_tree_nodev()` internally obtains or creates a superblock and then invokes the provided callback to intialize it. In the case of ramfs, its `.get_tree` handler calls `get_tree_nodev()` with `ramfs_fill_super()`.
+
+``` c
+static int ramfs_get_tree(struct fs_context *fc)
+{
+    return get_tree_nodev(fc, ramfs_fill_super);
+}
+```
+
+If a new superblock is needed, `alloc_super()` is called to allocate a `super_block` object, and the newly created `super_block` object is then inserted into the `file_system_type`'s superblock linked list (`s->s_type->fs_supers`) by `sget_fc()`. After that, the `fill_super` callback (in this case, `ramfs_fill_super()`) is invoked to initialize that `super_block` object.
+
+```
+get_tree_nodev(fc, ramfs_fill_super)
+=> vfs_get_super(fc, NULL, fill_super)
+  => sb = sget_fc(fc, test, set_anon_super_fc)
+    => s = alloc_super(fc->fs_type, fc->sb_flags, user_ns)
+    => hlist_add_head(&s->s_instances, &s->s_type->fs_supers)
+  
+  => fill_super(sb, fc)
+
+=> fc->root = dget(sb->s_root)
+```
+
+The `fill_super` callback must initialize the root `inode` and the root `dentry`, since the root `inode` contains the **inode operations (`i_op`)** and **file operations (`i_fop`)** required for directory lookup and file access.
+
+In `ramfs_fill_super()`, `ramfs_get_inode()` is called to allocate and initialize the root `inode`. Then `d_make_root()` creates a `dentry` associated with that `inode`, and the returned `dentry` is assigned to the superblock's root (`sb->s_root`).
+
+```
+fill_super(sb, fc)   # ramfs_fill_super
+=> sb->s_op = &ramfs_ops
+=> inode = ramfs_get_inode(sb, NULL, S_IFDIR | ..., 0)
+  => inode = new_inode(sb)
+    => alloc_inode(sb)
+      => if sb->s_op->alloc_inode != NULL
+        => inode = sb->s_op->alloc_inode(sb)
+      => else
+        => inode = alloc_inode_sb(sb)
+  
+  => if (mode == S_IFDIR)
+    => inode->i_op = &ramfs_dir_inode_operations
+    => inode->i_fop = &simple_dir_operations
+
+=> sb->s_root = d_make_root(inode)
+```
+
+At the end of the mounting process, `vfs_create_mount()` creates a `mount` object and associate it with the superblock by setting `m->mnt.mnt_sb` to point to the superblock (`root->d_sb`).
+
+```
+vfs_create_mount(fc)
+=> mnt = alloc_vfsmnt(fc->source)
+  => mnt = kmem_cache_zalloc(mnt_cache)
+
+=> setup_mnt(mnt, fc->root)
+  => m->mnt.mnt_sb = root->d_sb
+  => m->mnt.mnt_root = dget(root)
+  => mnt_add_instance(m, s)
+    => s->s_mounts = m
+
+=> return &mnt->mnt
+```
+
+Since the filesystem context (`fs_context`) is only used during the mount setup phrase, it is **released** before returning to userspace and is not referenced by any persistent VFS object.
+
+<br>
+
+In summary, the filesystem name is used to look up the corresponding **`file_system_type`**, and its `.init_fs_context` handler is invoked to initialize a **filesystem context** (`fs_context`). Later, the kernel calls the filesystem's `.get_tree` handler to to build a file tree. Internally, a **`super_block`** object and a **`mount`** object are created, and the **root `inode`** and the **root `dentry`** are intialized by the filesystem's `fill_super` callback.
+
+```
+             [lookup]
+name ("ramfs") ---> file_system_type list ("bdev" <--> "aio" <--> "anon_inodefs" ...)
+                          |
+                          | [found]
+                          v
+                     ramfs_fs_type (.name == "ramfs")
+                          |
+                          | (fs_supers)
+           (s_root)       |
+dentry   <---------  super_block --> super_block --> super_block --> ...
+|        <--              |
+|           |             | (s_mounts)
+|(d_inode)  |             |
+|            ---------  mount --> mount --> mount --> ...
+|          (mnt_root)           
+v
+inode
+```
+
+Awesome! Now we understand how a simple file descriptor can reference the actual file content and interact with the filesystem.
+
+You may wonder why mount points and superblocks do not have a one-to-one relationship in the diagram. This is because when the mount flags include `MS_BIND`, the kernel invokes `__do_loopback()` instead of `do_new_mount()`. In this case, the process requests a new mount point based on an existing one. As a result, the kernel allocates a new `mount` object for the target path, but it **shares the same underlying superblock as the original mount**.
+
+```
+path_mount(dev_name, path, type_page, flags, data_page)
+=> do_loopback(path, dev_name, flags & MS_REC)
+  => kern_path(old_name, LOOKUP_FOLLOW|LOOKUP_AUTOMOUNT, &old_path)
+  => __do_loopback(&old_path, recurse)
+    => clone_mnt(old, old_path->dentry, 0)
+      => mnt = alloc_vfsmnt(old->mnt_devname)
+      => setup_mnt(mnt, root)   <-----   attach to existing superblock
+```
+
+# 2. Past Vulnerabilites
+
+Here I chose two vulnerabilities that were exploited in kernelCTF in recent years to illustrate security issues in the filesystem.
+
+## 2.1. CVE-2022-0185: vfs: fs_context: fix up param length parsing in legacy_parse_param
+> https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=722d94847de29310e8aa03fcbdb41fc92c521756
+
+This is an integer underflow vulnerability in `legacy_parse_param()`, a function used to parse mount parameter for legacy filesystems. The vulnerability leads to a length check bypass, which is ultimately turned into a heap overflow.
+
+``` diff
+@@ -548,7 +548,7 @@ static int legacy_parse_param(struct fs_context *fc, struct fs_parameter *param)
+                   param->key);
+     }
+ 
+-   if (len > PAGE_SIZE - 2 - size)
++   if (size + len + 2 > PAGE_SIZE)
+        return invalf(fc, "VFS: Legacy: Cumulative options too large");
+    if (strchr(param->key, ',') ||
+        (param->type == fs_value_is_string &&
+```
+
+We've mentioned that the mount parameters are parsed by `parse_monolithic_mount_data()`. In fact, to support more flexible configuration, Linux later introduced three new syscalls: **`fsopen`, `fsconfig` and `fsmount`**. They roughly correspond to the main steps of mounting: creating a filesystem context (selecting the filesystem type), configuring mount options, and finally creating a mount object.
+
+By calling the `fsconfig` syscall, we can set the key and value to a malformed parameter, causing the kernel to invoke the filesystem context's `.parse_param` handler, which eventually reaches the vulnerable function `legacy_parse_param()`.
+
+```
+__do_sys_fsconfig(fd, cmd, key, value, aux)
+=> vfs_fsconfig_locked(fc, cmd, &param)
+  => vfs_parse_fs_param(fc, param)
+    => fc->ops->parse_param(fc, param)
+       (legacy_fs_context_ops.parse_param == legacy_parse_param)
+```
+
+But what kind of filesystem sets `&legacy_fs_context_ops` as its filesystem context operations?
+
+We just need to find a filesystem that **does not implement `.init_fs_context` handler**. In that case, `alloc_fs_context()` will fall back to use the legacy initialization path.
+
+```
+alloc_fs_context()
+=> if (fc->fs_type->init_fs_context == NULL)
+  => legacy_init_fs_context(fc)
+    => fc->ops = &legacy_fs_context_ops
+```
+
+## 2.2. CVE-2023-5345: fs/smb/client: Reset password pointer to NULL
+> https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=e6e43b8aa7cd3c3af686caf0c2e11819a886d705
+
+When configuring an SMB filesystem, `smb3_fs_context_parse_param()` is called to parse user-provided parameters. However, it forgets to reset `ctx->password` to `NULL` after freeing it. As a result, a user can trigger multiple frees on the same pointer.
+
+``` diff
+@@ -1541,6 +1541,7 @@ static int smb3_fs_context_parse_param(struct fs_context *fc,
+ 
+  cifs_parse_mount_err:
+    kfree_sensitive(ctx->password);
++   ctx->password = NULL;
+    return -EINVAL;
+ }
+```
+
+This function can be reached in the same way as in CVE-2022-0185.
+
+# 3. Summary
+
+This post just provides a simple overview of the Linux filesystem. The root causes of the two vulnerabilities are relatively straighforward and can be understood by most Linux kernel researchers. Obviously, I think finding them may not be too difficult for AI nowadays 😆.
+
+But what happens when filesystems interact with **namespaces** or other features, or when **multiple filesystems** are layered or combined? Could unexpected issues arise?
+
+I may write a follow-up post to explore the interaction between the filesystem and other subsystems. It is a complex but interesting topic!

@@ -116,3 +116,17 @@ rm -rf ~/.bundle ~/.gem
 bundle install
 bundle exec jekyll serve
 ```
+
+### VScode highline
+
+Edit `$HOME/Library/Application Support/Code/User/settings.json` and add the following attribute:
+
+``` json
+{
+  ...
+  "workbench.colorCustomizations": {
+      "editor.lineHighlightBackground": "#46492d"
+  },
+  ...
+}
+```
