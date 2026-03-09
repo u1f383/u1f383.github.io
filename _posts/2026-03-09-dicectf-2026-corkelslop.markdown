@@ -1,10 +1,10 @@
 ---
 layout: post
-title:  "diceCTF 2026 - corkelslop"
+title:  "diceCTF 2026 - cornelslop"
 categories: Linux
 ---
 
-This week I played diceCTF 2026 with team **fewer** and spent 12 hours solving a Linux kernel challenge, **corkelslop**. This post is a simple writeup without too much detail, and you can find the full exploit [here](/assets/dicectf-2026-corkelslop-exp.c).
+This week I played diceCTF 2026 with team **fewer** and spent 12 hours solving a Linux kernel challenge, **cornelslop**. This post is a simple writeup without too much detail, and you can find the full exploit [here](/assets/dicectf-2026-cornelslop-exp.c).
 
 ## 1. Bug
 
