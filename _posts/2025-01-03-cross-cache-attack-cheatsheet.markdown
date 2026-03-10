@@ -244,21 +244,23 @@ SYSCALL_DEFINE(/* ... */)
 
 ## 4. Notes
 
-- If a full slab on CPU-0 has **one object freed** [1], and CPU-1 has a partial slab [2], the freed object will **be placed into CPU-1’s partial**.
-    ``` c
-    prior = slab->freelist;
-    if (likely(!n)) {
-        if (likely(was_frozen)) {
-            stat(s, FREE_FROZEN);
-        } else if (kmem_cache_has_cpu_partial(s) /* [2] */ && !prior /* [1] */) {
-            put_cpu_partial(s, slab, 1);
-            stat(s, CPU_PARTIAL_FREE);
-        }
-        return;
-    }
-    ```
-    - Solution: Make the full slab non-full from the start (by freeing one more object). This ensures `prior` will not be NULL.
-- If CPU-1 is empty, the object freed from CPU-0 will be placed into CPU-1, making it a partial slab.
+- Move a full slab from one CPU to another:
+```
+kfree(object)
+=> x = (void *)object
+=> folio = virt_to_folio(object)
+=> slab = folio_slab(folio)
+=> s = slab->slab_cache
+=> slab_free(s, slab, x, _RET_IP_)
+=> do_slab_free(s, slab, object, object, 1, addr)
+  => c = raw_cpu_ptr(s->cpu_slab)
+  => if (slab != c->slab) <----- different CPUs
+    => __slab_free(s, slab, head, tail, cnt, addr)
+      => if (kmem_cache_has_cpu_partial(s) && !prior)   <------ !prio == originally a full slab
+        => put_cpu_partial(s, slab, 1)  <------ slab will be placed into existing CPU partial
+      => if (!kmem_cache_has_cpu_partial(s) && !prior)
+        => add_partial(n, slab, DEACTIVATE_TO_TAIL)  <------ create a new CPU partial
+```
 - The following is the execution flow of releasing a slab:
 ```
 __free_slab()
