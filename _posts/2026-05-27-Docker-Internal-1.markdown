@@ -25,7 +25,7 @@ In fact, the Docker Engine consists of several components: the CLI tool (`docker
 
 <img src="/assets/image-20260526000000001.png" alt="image-20260526000000001" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
 
-When executing a command like `docker run -it ubuntu /bin/bash`, `docker-cli` first connects to the Unix socket `docker.sock` and sends the request. Then, `dockerd` wraps the request in gPRC format and forwards it to `containerd` via the Unix socket `containerd.sock`. `containerd` is responsible for fetching the image, invoking `runc` to create container, and managing the container lifecycle. Finally, the container is spawned in an isolated execution environment based on Linux namespace, capabilities and cgroups.
+When executing a command like `docker run -it ubuntu /bin/bash`, `docker-cli` first connects to the Unix socket `docker.sock` and sends the request. Then, `dockerd` wraps the request in gPRC format and forwards it to `containerd` via the Unix socket `containerd.sock`. `containerd` is responsible for loading the image, invoking `runc` to create container, and managing the container lifecycle. Finally, the container is spawned in an isolated execution environment based on Linux namespace, capabilities and cgroups.
 
 As the backend of Docker Engine, or precisely **the container runtime**, `containerd` can also be used by other engines or orchestrators, such as Kubernetes.
 
