@@ -100,6 +100,52 @@ losetup -a
 udisksctl unmount -b /dev/loopN
 ```
 
+### Minimal ARM Linux kernel VM
+
+``` bash
+wget https://busybox.net/downloads/busybox-1.37.0.tar.bz2
+make menuconfig
+# Settings -> Build Options -> [*] Build static binary (no shared libs)
+# Settings -> Build Options -> [ ] SHA1 & [ ] SHA256
+make install
+
+cd _install
+touch pack.sh && chmod +x pack.sh
+```
+
+File `pack.sh` (just a helper for packing the ramfs)
+``` bash
+#! /bin/bash
+find . -print0 | cpio --null -o --format=newc > ../rootfs.cpio
+```
+
+Minimal kernel
+``` bash
+make tinyconfig
+make menuconfig
+# fine-tuning your environment
+# CONFIG_ARM64_VA_BITS=39
+# [*] initial RAM filesystem and RAM disk (initramfs/initrd) support
+# [*] Kernel support for ELF binaries
+# [*] Kernel support for scripts starting with #!
+# [*] Enable TTY
+# [*] ARM AMBA PL011 serial port support
+# [*] Support for console on AMBA serial port
+# [*] Enable support for printk
+```
+
+run.sh
+``` bash
+exec qemu-system-aarch64 -m 2G -nographic -no-reboot \
+  -machine virt \
+  -cpu cortex-a57 \
+  -monitor none \
+  -smp cores=1 \
+  -kernel lts-6.12.69/arch/arm64/boot/Image \
+  -initrd rootfs.cpio \
+  -append "root=/dev/ram rw console=ttyAMA0 loglevel=7 nokaslr" -s
+```
+
 ### Ubuntu specified version
 ``` bash
 # Ubuntu offical page
@@ -1214,6 +1260,8 @@ target: `./native/out/arm64-v8a/magiskboot`
 
 ### Get Kernel Module
 
+Download the image: https://developers.google.com/android/images
+
 There are two img files containing kernel modules: `vendor_dlkm.img` and `vendor_boot.img`:
 
 ``` bash
@@ -1246,6 +1294,9 @@ Linux localhost 6.1.129-android14-11-g4cadbfbbe186-ab13408047 #1 SMP PREEMPT Fri
 
 allowed syscall
 - [SYSCALLS.TXT](https://android.googlesource.com/platform/bionic/+/HEAD/libc/SYSCALLS.TXT)
+- [SECCOMP_ALLOWLIST_COMMON.TXT](https://android.googlesource.com/platform/bionic/+/HEAD/libc/SECCOMP_ALLOWLIST_COMMON.TXT?utm_source=chatgpt.com%2F)
+
+The final seccomp allowlist is `SYSCALLS.TXT` - `SECCOMP_BLOCKLIST.TXT` + `SECCOMP_ALLOWLIST.TXT`
 
 ### Runtime Debug
 
@@ -1299,4 +1350,274 @@ mkdir build
 cd build
 ../configure --enable-debug
 make -j`nproc`
+```
+
+## Frida
+
+### Run
+
+```bash
+adb shell "su -c 'chmod +x /data/local/tmp/frida-server-17.4.1-android-arm64'"
+adb shell "su -c '/data/local/tmp/frida-server-17.4.1-android-arm64 &'"
+frida-ps -U
+```
+
+### Modify Java Class Field
+
+Command: `frida -U -f <app_name> -l modify_config.js`
+
+```javascript
+Java.perform(function () {
+    var cls = Java.use('a.b.c.d.Method');
+    console.log('staticField =', cls.apiHost.value);
+    cls.baseUrl.value = "https://orange.tw";
+});
+```
+
+### Bypass TLS pinning
+
+Command: `frida -U -f <app_name> -l bypass_pinning.js`
+
+```javascript
+if (!Java.available) {
+    console.log('Java VM not available');
+} else {
+    Java.perform(function () {
+        // var TARGET_CLASS = 'okhttp3.CertificatePinner'; 
+        // var TARGET_CLASS = 'javax.net.ssl.X509TrustManager';
+        // var TARGET_CLASS = 'okhttp3.internal.tls.OkHostnameVerifier';
+        var TARGET_CLASS = 'android.security.net.config.NetworkSecurityTrustManager';
+
+        try {
+            var C = Java.use(TARGET_CLASS);
+            var methods = C.class.getDeclaredMethods();
+            var hookedNames = {};
+
+            for (var i = 0; i < methods.length; i++) {
+                try {
+                    var name = methods[i].getName();
+                    if (hookedNames[name]) continue;
+                    hookedNames[name] = true;
+
+                    if (typeof C[name] === 'undefined') {
+                        continue;
+                    }
+
+                    var ovs = C[name].overloads;
+                    for (var j = 0; j < ovs.length; j++) {
+                        console.log(`hooking ${name} ...`);
+                        (function (methodName, ov) {
+                            var orig = ov;
+                            ov.implementation = function () {
+                                var Thread = Java.use('java.lang.Thread');
+                                var current = Thread.currentThread();
+                                var st = current.getStackTrace();
+
+                                console.log(`======== ${methodName} ========`);
+                                
+                                // stack dump
+                                for (var i = 0; i < Math.min(st.length, 12); i++) {
+                                    console.log('  #' + i + ' ' + st[i].toString());
+                                }
+
+                                for (var k = 0; k < arguments.length; k++) {
+                                    try {
+                                        console.log(`arg[${k}] = ${arguments[k]}`);
+                                    } catch (e) {
+                                        console.log(`arg[${k}] = <error: ${e}>`);
+                                    }
+                                }
+                                console.log(`====================================`);
+
+                                try {
+                                    var ret = orig.apply(this, arguments);
+                                    console.log(`ret ===========> ${ret}`);
+                                    return ret;
+                                } catch (e) {
+                                    // ==== Ignore exception ====
+                                    // java.security.cert.CertificateException: 
+                                    // java.security.cert.CertPathValidatorException: Trust anchor for certification path not found.
+                                    console.log(`error ===============> ${e}`);
+                                }
+                                return;
+                            };
+                        })(name, ovs[j]);
+                    }
+                } catch (eMethod) {
+                    // skip
+                }
+            }
+            console.log('[+] Hooked accessible methods of ' + TARGET_CLASS + ' via reflection');
+        } catch (e) {
+            console.log('[-] Failed to hook ' + TARGET_CLASS + ': ' + e);
+        }
+    });
+}
+```
+
+### Hook Native Function
+
+Command: `frida -U -p <pid> -l hook_native_func.js`
+
+```javascript
+setTimeout(function () {
+    // ============ method-1 : attached by specific address ============
+    var addr = ptr("0x759511c530"); // replaced to your target function address
+    console.log(addr.readByteArray(10));
+    Interceptor.attach(addr, {
+      onEnter(args) {
+          const x0 = this.context.x0;
+          const x1 = this.context.x1;
+          const x25 = this.context.x25;
+          const x30 = this.context.lr;
+          console.log(`[*] Hit ${addr}`);
+          console.log(`    x0  = ${x0}`);
+          console.log(`    x1  = ${x1}`);
+          console.log(`    x30 = ${x30}`);
+          console.log(`    x25 = ${x25}`);
+      }
+    });
+
+    // ============ method-2 : attached by function name ============
+    try {
+        var pattern = "function_pattern";
+        var matches = [];
+        Process.enumerateModules().forEach(function(m) {
+            try {
+                var exports = m.enumerateExports();
+                exports.forEach(function(exp) {
+                    if (exp.name.indexOf(pattern) !== -1) {
+                        matches.push({module: m.name, name: exp.name, addr: exp.address});
+                    }
+                });
+            } catch (e) {}
+        });
+
+        if (matches.length === 0) {
+            console.log("No native symbols matching pattern found.");
+        } else {
+            console.log("Found native symbols:");
+            matches.forEach(function(m) {
+                console.log(m.module, m.name, m.addr);
+
+                Interceptor.attach(m.addr, {
+                    onEnter: function (args) {
+                        console.log("Entered native:", m.name);
+                        console.log("args[0] (JNIEnv):", args[0]);
+                        console.log("args[1] (jclass/jobject):", args[1]);
+                        console.log(`args[3] = ${args[3]}`);
+                    },
+                    onLeave: function (retval) {
+                       // console.log("native returned:", retval);
+                    }
+                });
+            });
+        }
+    } catch (e) {
+        console.log("native hook error:", e);
+    }
+}, 0);
+```
+
+### Parse APK
+
+Command: `python3 parse_apk.py <apk_file>`
+
+> If APP has `android:extractNativeLibs="false"` attribute, the native lib will be mapped from apk file, so `/proc/pid/maps` won't show any information about `libXXXX.so`.
+> The so files are included in APK file, and you need to write a script to find them out.
+
+```python
+import struct, sys
+
+apk = sys.argv[1]
+with open(apk, 'rb') as f:
+    data = f.read()
+
+# Scan local file headers (0x04034b50)
+off = 0
+LFH = 0x04034b50
+results = []
+while True:
+    i = data.find(b'PK\x03\x04', off)
+    if i < 0: break
+    sig, ver, flag, comp, mtime, mdate, crc, csize, usize, nlen, elen = struct.unpack_from('<IHHHHHIIIHH', data, i)
+    if sig != LFH: break
+    name = data[i+30:i+30+nlen].decode('utf-8', errors='ignore')
+    extra = data[i+30+nlen:i+30+nlen+elen]
+    data_start = i + 30 + nlen + elen
+    # List all .so file
+    if comp == 0 and name.startswith('lib/') and name.endswith('.so'):
+        results.append((name, data_start))
+    off = data_start + csize
+
+for name, ofs in results:
+    print(f"{name}\tdata_offset=0x{ofs:x}")
+```
+
+### mitmproxy
+
+Command: `mitmproxy -s mitm_proxy.py --set console_mouse=false --mode regular -p 8081`
+
+```python
+from mitmproxy import http, ctx
+import json
+
+def response(flow: http.HTTPFlow) -> None:
+    req = flow.request
+    resp = flow.response
+    path = req.path.split("?")[0]
+
+    if "orange.tw" not in req.host:
+        return
+
+    if path == "/AAA" and req.method.upper() == "POST":
+        data = json.loads(resp.content)
+        resp.text = json.dumps(data, ensure_ascii=False)
+    elif UserID != None and (path == "/BBB" or path == "/CCC") and req.method.upper() == "GET":
+        data = json.loads(resp.content)
+        resp.text = json.dumps(data, ensure_ascii=False)
+
+    resp.content = resp.content
+```
+
+Proxy phone:8080 to host:8081
+```bash
+adb reverse tcp:8080 tcp:8081
+# adb reverse --remove-all
+```
+
+On the phone：
+```bash
+## If uses Java network API
+adb shell settings put global http_proxy 127.0.0.1:8080
+su -c "am broadcast -a android.intent.action.PROXY_CHANGE"
+
+## reset
+# adb shell settings put global http_proxy :0
+
+## brute-force way
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports 8080
+
+## show
+iptables -t nat -L -n -v --line-numbers
+
+## delete
+iptables -t nat -D OUTPUT 1
+```
+
+### Termux
+
+> https://termux.dev/en/
+
+```bash
+pkg install python3
+pkg install busybox
+pkg install sshd
+pkg install openssh
+
+sshd
+whoami # a_...
+
+adb forward tcp:8022 tcp:8022
+ssh -p 8022 u0_a287@127.0.0.1
 ```
