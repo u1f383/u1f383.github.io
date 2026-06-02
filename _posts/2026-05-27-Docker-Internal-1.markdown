@@ -39,7 +39,7 @@ The source code for both `docker-cli` and `dockerd` can be found in the [moby/mo
 
 ### 2.1. Register API Endpoints
 
-The entry point of the Docker daemon (`dockerd`) is `start()` in `daemon/command/daemon.go`. `start()` creates an HTTP server [1] that supports both the HTTP protocol [2] and the gRPC protocol [3], since other CLI tools may communicate via gRPC.
+The entry point of the Docker daemon (`dockerd`) is `start()` in `daemon/command/daemon.go`. `start()` creates an HTTP server [1] that supports both the **HTTP protocol** [2] and the **gRPC protocol** [3], since other CLI tools may communicate via gRPC.
 
 ``` go
 // daemon/command/daemon.go
@@ -130,7 +130,7 @@ func (c *containerRouter) initRoutes() {
 
 ### 2.2. Send Request to containerd
 
-Some endpoints simply return status or metadata, but others handle more complex tasks and need to forward requests to `containerd`. Here, we'll use pausing a container as an example (since it's more straightforward).
+Some endpoints simply return status or metadata, but others handle more complex tasks and need to forward requests to `containerd`. Here, we'll use **pausing a container** as an example (since it's more straightforward).
 
 Pausing a container is handled by `postContainersPause()` [1], which internally calls `t.Task.Pause()` [2].
 
@@ -190,7 +190,7 @@ type task struct {
 }
 ```
 
-By grepping through the source code of [`containerd`](https://github.com/containerd/containerd), we can see that the `Task`'s pause handler is defined in `client/task.go`. `Pause()` wraps the container ID into a `PauseTaskRequest` [4], which is a Protobuf-formatted structure.
+By grepping through the source code of [`containerd`](https://github.com/containerd/containerd), we can see that the `Task`'s pause handler is defined in `client/task.go`. `Pause()` wraps the container ID into a `PauseTaskRequest` [4], which is a **Protobuf-formatted** structure.
 
 ``` go
 // client/task.go
@@ -212,7 +212,7 @@ type PauseTaskRequest struct {
 }
 ```
 
-Noted that there are many versions of `tasks`, and it can be confusing to tell which one is being used. You can identify the correct one by checking the package name [5].
+Noted that there are many versions of `tasks`, and it can be confusing to tell which one is being used. You can identify the correct one by **checking the package name** [5].
 
 ``` go
 // client/client.go
@@ -347,7 +347,7 @@ func init() {
 }
 ```
 
-Later, when the server prepares to run, the `Register()` method of every registered service is called to set up gRPC endpoints based on predefined descriptors [8], and their handlers are finally attached [9].
+Later, when the server prepares to run, the `Register()` method of every registered service is called to set up gRPC endpoints based on predefined descriptors [8], and **their handlers are finally attached** [9].
 
 ``` go
 // plugins/services/tasks/service.go
@@ -504,7 +504,7 @@ func (s *shimTask) Pause(ctx context.Context) error { // [8]
 }
 ```
 
-`NewTaskClient()` returns different `TTRPCTaskService` object depending on the type and version. For a TTRPC client with version 2, a `ttrpctaskClient` object is created [11]. Finally, we wrap the TTRPC message and send it [12] to the service `"containerd.task.v2.Task"` with method `"Pause"` through the shim daemon socket.
+`NewTaskClient()` returns different `TTRPCTaskService` object depending on the **type** and **version**. For a TTRPC client with version 2, a `ttrpctaskClient` object is created [11]. Finally, we wrap the TTRPC message and send it [12] to the service `"containerd.task.v2.Task"` with method `"Pause"` through the shim daemon socket.
 
 ``` go
 // core/runtime/v2/bridge.go
@@ -547,7 +547,7 @@ func (c *ttrpctaskClient) Pause(ctx context.Context, req *PauseRequest) (*emptyp
 
 ## 4. containerd-shim-runc-v2 (shim Daemon)
 
-Every container needs a `shim` daemon to hold its stdio, wait for its init process, and report exit status back to `containerd`. This also decouples the container's lifecycle from `containerd` itself: if `containerd` crashes or gets restarted, the `shim` keeps running, the container stays alive, and `containerd` can later re-attach to the `shim` daemon to recover state. As a result, a shim daemon exposes the Unix socket, allowing `containerd` to indirectly control the container.
+Every container **needs a `shim` daemon** to hold its stdio, wait for its init process, and report exit status back to `containerd`. This also decouples the container's lifecycle from `containerd` itself: if `containerd` crashes or gets restarted, the `shim` keeps running, the container stays alive, and `containerd` can later re-attach to the `shim` daemon to recover state. As a result, a shim daemon exposes the Unix socket, allowing `containerd` to indirectly control the container.
 
 When a `shim` daemon initializes, the main function `run()` iterates through all predefined service objects [1] and register each as a TTRPC service [2].
 
@@ -635,7 +635,7 @@ func (r *Runc) Pause(context context.Context, id string) error {
 
 ## 5. runc
 
-From the previous section, we learnd that the shim daemon handles the pause container request by forking a new process and executing `runc`. But what exactly is `runc`?
+From the previous section, we learnd that the shim daemon handles the pause container request by **forking a new process and executing `runc`**. But what exactly is `runc`?
 
 [runc](https://github.com/opencontainers/runc) is a **low-level container runtime** implmentation, or you can say an OCI (Open Container Initiative) runtime. Its job is to directly control a container, such as creating a new container, listing all processes inside a container, and so on.
 
@@ -708,7 +708,7 @@ func (m *Manager) Freeze(state cgroups.FreezerState) error {
 }
 ```
 
-The freezer modifies the pseudo-file `cgroup.freeze` [4, 5] to update the status of the associated container, causing it to be frozen.
+The freezer modifies the pseudo-file `cgroup.freeze` [4, 5] to **update the status of the associated container**, causing it to be frozen.
 
 ``` go
 // vendor/github.com/opencontainers/cgroups/fs2/freezer.go
@@ -723,6 +723,6 @@ func setFreezer(dirPath string, state cgroups.FreezerState) error {
 }
 ```
 
-## 6. Others
+## 6. Summary
 
 The first post only focus on the communication methods and the relationship between each component. In next two posts, I will cover the attack surfaces and some of past vulnerabilities, also nvidia toolkit implmentation.
