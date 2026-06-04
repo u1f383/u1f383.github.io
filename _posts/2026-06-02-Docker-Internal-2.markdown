@@ -8,9 +8,9 @@ In the last post, we introduced the relationship between the components in the D
 
 ## 1. Pull an Image
 
-Imagine you just run `docker pull <image>` and then you've been pwned (just an example 😝). Yeah, the first attack surface is quite straigtforward: when you download a **malicious image** which is published by an attacker, the Docker daemon parses the metadata, extract the compressed files, and save them into the filesystem. During this process, the crafted file may affect host data if bugs or vulnerabilities exist.
+Imagine you just run `docker pull <image>` and then you've been pwned (just an example 😝). Yeah, the first attack surface is quite straightforward: when you download a **malicious image** which is published by an attacker, the Docker daemon parses the metadata, extracts the compressed files, and saves them into the filesystem. During this process, the crafted file may affect host data if bugs or vulnerabilities exist.
 
-In this post, we'll analyze how Docker pulls an image, parses the metadata, and extract the files. We'll also explore potential attack surfaces in the end.
+In this post, we'll analyze how Docker pulls an image, parses the metadata, and extracts the files. We'll also explore potential attack surfaces in the end.
 
 ### 1.1. Setup Environment
 
@@ -168,7 +168,7 @@ type Descriptor struct {
 }
 ```
 
-How does `Resolve()` return a descriptor? It first gets the registry host based on the reference name [6], then decides which which built-in paths to use [7]. It then iterates over the paths and hosts, constructing a HEAD request to the remote registry [8] and sending it [9] with a retry mechanism.
+How does `Resolve()` return a descriptor? It first gets the registry host based on the reference name [6], then decides which built-in paths to use [7]. It then iterates over the paths and hosts, constructing a HEAD request to the remote registry [8] and sending it [9] with a retry mechanism.
 
 ``` go
 // vendor/github.com/containerd/containerd/v2/core/remotes/docker/resolver.go
@@ -304,7 +304,7 @@ func (ah *authHandler) authorize(ctx context.Context) (string, string, error) {
 }
 ```
 
-`req.doWithRetries()` returns the HTTP response data to its caller, `Resolve()`, and the **`"Docker-Content-Digest"` header is extracted** [15] from the headers. In the end, the `Resolve()` wraps the response data into a descripbtor [16] and returns.
+`req.doWithRetries()` returns the HTTP response data to its caller, `Resolve()`, and the **`"Docker-Content-Digest"` header is extracted** [15] from the headers. In the end, the `Resolve()` wraps the response data into a descriptor [16] and returns.
 
 ``` go
 // vendor/github.com/containerd/containerd/v2/core/remotes/docker/resolver.go
@@ -627,7 +627,7 @@ func Fetch(ctx context.Context, ingester content.Ingester, fetcher Fetcher, desc
 }
 ```
 
-The writer object is allocated by `OpenWriter()`, which evetually returns a `remoteWriter` object [2] with a client backed by a TTRPC stream to `containerd`.
+The writer object is allocated by `OpenWriter()`, which eventually returns a `remoteWriter` object [2] with a client backed by a TTRPC stream to `containerd`.
 
 ```go
 // vendor/github.com/containerd/containerd/v2/core/content/helpers.go
@@ -657,7 +657,7 @@ func (pcs *proxyContentStore) Writer(ctx context.Context, opts ...content.Writer
 }
 ```
 
-`Copy()` writes file by calling `copyWithBuffer()` and saves file by calling `cw.Commit()`. Both two functions send the request with data content to `containerd`. Take `copyWithBuffer()` as an example: it sends action `WriteAction_WRITE` with data attached [3] in the end.
+`Copy()` writes file by calling `copyWithBuffer()` and saves file by calling `cw.Commit()`. Both functions send the request with data content to `containerd`. Take `copyWithBuffer()` as an example: it sends action `WriteAction_WRITE` with data attached [3] in the end.
 
 ``` go
 // vendor/github.com/containerd/containerd/v2/core/content/helpers.go
@@ -996,7 +996,7 @@ We take one of the manifest data from pulling a `Ubuntu:24.04` image as an examp
 }
 ```
 
-`unpack()` first unmarshals the config descriptor into `i` [8] and later calls `u.fetch()` [9] to download the layer data. After it's downloaded, `a.Apply()` is called to the unpack compressed layer [10].
+`unpack()` first unmarshals the config descriptor into `i` [8] and later calls `u.fetch()` [9] to download the layer data. After it's downloaded, `a.Apply()` is called to unpack the compressed layer [10].
 
 ``` go
 // vendor/github.com/containerd/containerd/v2/core/unpack/unpacker.go
@@ -1336,7 +1336,7 @@ func (s *fsApplier) Apply(ctx context.Context, desc ocispec.Descriptor, mounts [
 }
 ```
 
-How does `GetProcessor()` decide which decoder to used? It calls all registered handlers until returns success [3]. By default, there is at least one processor: `compressedHandler` [4].
+How does `GetProcessor()` decide which decoder to use? It calls all registered handlers until one returns success [3]. By default, there is at least one processor: `compressedHandler` [4].
 
 ``` go
 // core/diff/stream.go
@@ -1505,7 +1505,7 @@ So `fs.RootPath()` has to make sure the resolved `ppath` is inside the root dire
 
 We won't trace the real code here because it's unnecessary. Just two points to know for safe path resolution:
 1. **Clamp every `".."` at the root**: it calls `filepath.Join("/", path)` so `"/.."` is restricted inside the root.
-2. **Manaully resolve the softlink**: it calls `lstat` to get the target path and re-bounds it to the root.
+2. **Manually resolve the softlink**: it calls `lstat` to get the target path and re-bounds it to the root.
 
 ## 4. Past Vulnerability
 

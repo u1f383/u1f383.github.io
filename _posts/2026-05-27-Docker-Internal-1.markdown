@@ -4,15 +4,15 @@ title:  "Docker Internal (1)"
 categories: Linux
 ---
 
-For this year's (2026) Pwn2Own Berlin, I tried to find vulnerabilities in Docekr but came up with nothing. This post simply documents my research on Docker's system implmentation, since it is quite interesting.
+For this year's (2026) Pwn2Own Berlin, I tried to find vulnerabilities in Docker but came up with nothing. This post simply documents my research on Docker's system implementation, since it is quite interesting.
 
-The attack scenario involves downloading a unknown image or running a malicious image, so I only focus on its architecture and then delve into the code that accesses user-controllable data.
+The attack scenario involves downloading an unknown image or running a malicious image, so I only focus on its architecture and then delve into the code that accesses user-controllable data.
 
 This series is expected to be divided into three parts, covering basic Docker's architecture, attack surfaces, past vulnerabilities, and the NVIDIA toolkit as a bonus! I hope you enjoy these posts and learn something new 🙂.
 
 ## 1. Introduction
 
-First, there are a few Docker products that may confuse readers. The most common one is [Docker Engine](https://docs.docker.com/engine/install/ubuntu/), and another is [Docker Desktop](https://www.docker.com/products/docker-desktop/), which is relatively niche but more user-friendly since it provides a GUI and runs containers inside a **lightweight VM** (for example, QEMU-KVM). Here, we are discussing about **Docker Engine**, not the Desktop Desktop.
+First, there are a few Docker products that may confuse readers. The most common one is [Docker Engine](https://docs.docker.com/engine/install/ubuntu/), and another is [Docker Desktop](https://www.docker.com/products/docker-desktop/), which is relatively niche but more user-friendly since it provides a GUI and runs containers inside a **lightweight VM** (for example, QEMU-KVM). Here, we are discussing **Docker Engine**, not the Docker Desktop.
 
 If you follow the installation steps for Docker Engine on Ubuntu, you'll notice that `containerd` is installed as well!
 
@@ -25,11 +25,11 @@ In fact, the Docker Engine consists of several components: the CLI tool (`docker
 
 <img src="/assets/image-20260526000000001.png" alt="image-20260526000000001" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
 
-When executing a command like `docker run -it ubuntu /bin/bash`, `docker-cli` first connects to the Unix socket `docker.sock` and sends the request. Then, `dockerd` wraps the request in gPRC format and forwards it to `containerd` via the Unix socket `containerd.sock`. `containerd` is responsible for loading the image, invoking `runc` to create container, and managing the container lifecycle. Finally, the container is spawned in an isolated execution environment based on Linux namespace, capabilities and cgroups.
+When executing a command like `docker run -it ubuntu /bin/bash`, `docker-cli` first connects to the Unix socket `docker.sock` and sends the request. Then, `dockerd` wraps the request in gRPC format and forwards it to `containerd` via the Unix socket `containerd.sock`. `containerd` is responsible for loading the image, invoking `runc` to create a container, and managing the container lifecycle. Finally, the container is spawned in an isolated execution environment based on Linux namespace, capabilities and cgroups.
 
 As the backend of Docker Engine, or precisely **the container runtime**, `containerd` can also be used by other engines or orchestrators, such as Kubernetes.
 
-By the way, according to the Pwn2Own rules, Docker Engine and `containerd` are listed as two seperate targets, but since Docker Engine appears to depend on `containerd` as its backend and cannot run on its own, I'm not sure what the attack scenarios for each would be.
+By the way, according to the Pwn2Own rules, Docker Engine and `containerd` are listed as two separate targets, but since Docker Engine appears to depend on `containerd` as its backend and cannot run on its own, I'm not sure what the attack scenarios for each would be.
 
 Anyway, let's first take a look at how the `dockerd` handles HTTP requests and sends gRPC requests to `containerd`!
 
@@ -39,7 +39,7 @@ The source code for both `docker-cli` and `dockerd` can be found in the [moby/mo
 
 ### 2.1. Register API Endpoints
 
-The entry point of the Docker daemon (`dockerd`) is `start()` in `daemon/command/daemon.go`. `start()` creates an HTTP server [1] that supports both the **HTTP protocol** [2] and the **gRPC protocol** [3], since other CLI tools may communicate via gRPC.
+The entry point of the Docker daemon (`dockerd`) is `start()` in `daemon/command/daemon.go`. `start()` creates an HTTP server [1] that supports both the **gRPC protocol** [2] and the **HTTP protocol** [3], since other CLI tools may communicate via gRPC.
 
 ``` go
 // daemon/command/daemon.go
@@ -318,7 +318,7 @@ func App() *cli.App {
 }
 ```
 
-The `builtins` package is a wrapper for built-in pacakges, and one of the built-in packages it imports is `tasks` [6]. The `init()` function of the `tasks` package is invoked when the package is imported, and it calls `Register()` [7] to register itself with the registry.
+The `builtins` package is a wrapper for built-in packages, and one of the built-in packages it imports is `tasks` [6]. The `init()` function of the `tasks` package is invoked when the package is imported, and it calls `Register()` [7] to register itself with the registry.
 
 ``` go
 // cmd/containerd/builtins/builtins.go
@@ -592,7 +592,7 @@ func RegisterTTRPCTaskService(srv *ttrpc.Server, svc TTRPCTaskService) {
 }
 ```
 
-The `svc.Pause()` ends up the `Pause()` function in `containerd/go-runc/runc.go`, which actually runs the command `runc pause <id>` [4] to pause the container. Interesting!
+The `svc.Pause()` ends up at the `Pause()` function in `containerd/go-runc/runc.go`, which actually runs the command `runc pause <id>` [4] to pause the container. Interesting!
 
 ``` go
 // cmd/containerd-shim-runc-v2/task/service.go
@@ -635,9 +635,9 @@ func (r *Runc) Pause(context context.Context, id string) error {
 
 ## 5. runc
 
-From the previous section, we learnd that the shim daemon handles the pause container request by **forking a new process and executing `runc`**. But what exactly is `runc`?
+From the previous section, we learned that the shim daemon handles the pause container request by **forking a new process and executing `runc`**. But what exactly is `runc`?
 
-[runc](https://github.com/opencontainers/runc) is a **low-level container runtime** implmentation, or you can say an OCI (Open Container Initiative) runtime. Its job is to directly control a container, such as creating a new container, listing all processes inside a container, and so on.
+[runc](https://github.com/opencontainers/runc) is a **low-level container runtime** implementation, or you can say an OCI (Open Container Initiative) runtime. Its job is to directly control a container, such as creating a new container, listing all processes inside a container, and so on.
 
 We'll continue using "pause a container" as our example. The variable `pauseCommand` in `pause.go` defines how the pause command works, and other commands follow a similar pattern: a file named `<command_name>.go` with a corresponding variable `<command_name>Command`.
 
@@ -725,4 +725,4 @@ func setFreezer(dirPath string, state cgroups.FreezerState) error {
 
 ## 6. Summary
 
-The first post only focus on the communication methods and the relationship between each component. In next two posts, I will cover the attack surfaces and some of past vulnerabilities, also nvidia toolkit implmentation.
+The first post only focuses on the communication methods and the relationship between each component. In the next two posts, I will cover the attack surfaces and some past vulnerabilities, as well as the NVIDIA toolkit implementation.
