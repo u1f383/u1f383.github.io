@@ -8,6 +8,8 @@ In the third post, we'll discuss how the container is loaded.
 
 Since the vulnerability I found has not yet been patched 😢, I won't discuss how the NVIDIA toolkit can work as a replacement runtime in this post. I'll cover it in a future post once the bug has been fixed.
 
+<img src="/assets/image-20260604000000000.png" alt="image-20260604000000000" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
+
 ## 1. Load a Container
 
 If you run `docker run --rm -it ubuntu:24.04`, `dockerd` will receive two HTTP requests. The first is to create a container, which is the same as executing `docker create ubuntu:24.04`.
