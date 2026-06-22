@@ -1,8 +1,13 @@
 ---
 layout: post
 title:  "Docker Internal (1)"
-categories: Linux
+categories: Container
 ---
+
+- Part1: [Docker Internal (1)]({% post_url 2026-05-27-Docker-Internal-1 %})
+- Part2: [Docker Internal (2)]({% post_url 2026-06-02-Docker-Internal-2 %})
+- Part3: [Docker Internal (3)]({% post_url 2026-06-04-Docker-Internal-3 %})
+- Part4: [Docker Internal (4)]({% post_url 2026-06-20-Docker-Internal-4 %})
 
 For this year's (2026) Pwn2Own Berlin, I tried to find vulnerabilities in Docker but came up with nothing. This post simply documents my research on Docker's system implementation, since it is quite interesting.
 
@@ -21,11 +26,11 @@ sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin dock
                                          ^^^^^^^^^^^^^
 ```
 
-In fact, the Docker Engine consists of several components: the CLI tool (`docker-cli`), the frontend (`dockerd`), the backend (`containerd`), the container's shim daemon (`containerd-shim-runc-v2`) and loader (`runc`). The interaction between each components looks like this:
+In fact, the Docker Engine consists of several components: the CLI tool (`docker`), the frontend (`dockerd`), the backend (`containerd`), the container's shim daemon (`containerd-shim-runc-v2`) and loader (`runc`). The interaction between each components looks like this:
 
 <img src="/assets/image-20260526000000001.png" alt="image-20260526000000001" style="display: block; margin-left: auto; margin-right: auto; zoom:50%;" />
 
-When executing a command like `docker run -it ubuntu /bin/bash`, `docker-cli` first connects to the Unix socket `docker.sock` and sends the request. Then, `dockerd` wraps the request in gRPC format and forwards it to `containerd` via the Unix socket `containerd.sock`. `containerd` is responsible for loading the image, invoking `runc` to create a container, and managing the container lifecycle. Finally, the container is spawned in an isolated execution environment based on Linux namespace, capabilities and cgroups.
+When executing a command like `docker run -it ubuntu /bin/bash`, `docker` first connects to the Unix socket `docker.sock` and sends the request. Then, `dockerd` wraps the request in gRPC format and forwards it to `containerd` via the Unix socket `containerd.sock`. `containerd` is responsible for loading the image, invoking `runc` to create a container, and managing the container lifecycle. Finally, the container is spawned in an isolated execution environment based on Linux namespace, capabilities and cgroups.
 
 As the backend of Docker Engine, or precisely **the container runtime**, `containerd` can also be used by other engines or orchestrators, such as Kubernetes.
 
@@ -35,7 +40,7 @@ Anyway, let's first take a look at how the `dockerd` handles HTTP requests and s
 
 ## 2. dockerd
 
-The source code for both `docker-cli` and `dockerd` can be found in the [moby/moby GitHub repo](https://github.com/moby/moby).
+The source code for both `docker` and `dockerd` can be found in the [moby/moby GitHub repo](https://github.com/moby/moby).
 
 ### 2.1. Register API Endpoints
 
@@ -151,7 +156,7 @@ func (c *containerRouter) postContainersPause(ctx context.Context, w http.Respon
         return err
     }
 
-    w.WriteHeader(http.StatusNoContent) // response to docker-cli
+    w.WriteHeader(http.StatusNoContent) // response to docker CLI (docker)
     return nil
 }
 

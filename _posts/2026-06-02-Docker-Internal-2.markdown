@@ -1,8 +1,13 @@
 ---
 layout: post
 title:  "Docker Internal (2)"
-categories: Linux
+categories: Container
 ---
+
+- Part1: [Docker Internal (1)]({% post_url 2026-05-27-Docker-Internal-1 %})
+- Part2: [Docker Internal (2)]({% post_url 2026-06-02-Docker-Internal-2 %})
+- Part3: [Docker Internal (3)]({% post_url 2026-06-04-Docker-Internal-3 %})
+- Part4: [Docker Internal (4)]({% post_url 2026-06-20-Docker-Internal-4 %})
 
 In the last post, we introduced the relationship between the components in the Docker system, and in this post, we'll discuss the attack surfaces.
 
@@ -41,7 +46,7 @@ After that, you can read the intercepted HTTP request in mitmproxy's TUI when yo
 
 ### 1.2. Auth & HEAD Manifest
 
-Run `docker pull ubuntu:24.04` and the docker-cli sends the following HTTP request to `dockerd`:
+Run `docker pull ubuntu:24.04` and `docker` (docker CLI) sends the following HTTP request to `dockerd`:
 
 ```
 POST /v1.54/images/create?fromImage=docker.io%2Flibrary%2Fubuntu&tag=24.04
