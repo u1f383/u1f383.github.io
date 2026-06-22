@@ -7,7 +7,7 @@ categories: Container
 - Part1: [Docker Internal (1)]({% post_url 2026-05-27-Docker-Internal-1 %})
 - Part2: [Docker Internal (2)]({% post_url 2026-06-02-Docker-Internal-2 %})
 - Part3: [Docker Internal (3)]({% post_url 2026-06-04-Docker-Internal-3 %})
-- Part4: [Docker Internal (4)]({% post_url 2026-06-20-Docker-Internal-4 %})
+- Part4: [Docker Internal (4)]({% post_url 2026-06-22-Docker-Internal-4 %})
 
 In the final post, we'll cover how vendors like NVIDIA or AMD integrate their code into the Docker system, including hardcoding in the moby code and designing a runtime. We will also show a vulnerability I found in the NVIDIA runtime to let you know what kind of code patterns may lead to problems.
 
